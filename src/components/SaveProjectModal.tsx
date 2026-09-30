@@ -75,8 +75,8 @@ export const SaveProjectModal: React.FC<SaveProjectModalProps> = ({
                   </span>
                 </div>
                 <p className="text-[11px] text-zinc-400 leading-relaxed">
-                  O vídeo original e todas as gravações ficam empacotados dentro do arquivo .dubdt.
-                  Você pode abrir em outro computador ou pendrive sem perder nenhum arquivo.
+                  O vídeo original, áudio M&E e todas as gravações (Takes) ficam empacotados dentro do arquivo .dubdt.
+                  Você pode abrir em qualquer outro computador ou pendrive sem perder nada.
                 </p>
               </div>
 
@@ -122,8 +122,7 @@ export const SaveProjectModal: React.FC<SaveProjectModalProps> = ({
                   </span>
                 </div>
                 <p className="text-[11px] text-zinc-400 leading-relaxed">
-                  Salva o roteiro, marcações e caminhos dos arquivos. O arquivo .dubdt fica minúsculo,
-                  mas depende dos arquivos continuarem nas mesmas pastas deste computador.
+                  Todas as suas gravações (Takes) são salvas diretamente no arquivo .dubdt para segurança total! Apenas o vídeo original pesado e o áudio M&E permanecem como referências no seu disco para economizar espaço.
                 </p>
               </div>
 

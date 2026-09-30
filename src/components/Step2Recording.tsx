@@ -278,10 +278,12 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
         const takeNum = currentTakesCount + 1
 
         let savedFilePath = ''
+        let savedMediaUrl = ''
         if (window.electronAPI) {
           try {
             const saved = await window.electronAPI.saveTakeAudio(currentLine.id, takeNum, arrayBuffer)
             savedFilePath = saved.filePath
+            savedMediaUrl = saved.mediaUrl
           } catch (e) {
             console.error('Erro salvando take:', e)
           }
@@ -293,7 +295,7 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
           filePath: savedFilePath,
           duration: currentLine.endTime - currentLine.startTime,
           createdAt: Date.now(),
-          audioBlobUrl: blobUrl,
+          audioBlobUrl: savedMediaUrl || blobUrl,
         }
 
         setLines((prev) =>

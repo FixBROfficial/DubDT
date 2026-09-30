@@ -8,6 +8,9 @@ const { Readable } = require('stream')
 const { pathToFileURL, fileURLToPath } = require('url')
 app.commandLine.appendSwitch('no-sandbox')
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
+// Avoid GPU persistent shader disk cache file-locking collisions that cause video presentation freezes
+app.commandLine.appendSwitch('disable-gpu-shader-disk-cache')
+
 // Register media scheme as privileged for streaming video/audio
 protocol.registerSchemesAsPrivileged([
   {
@@ -30,11 +33,17 @@ let projectSessionsDir = null
 function ensureDirectories() {
   projectTakesDir = path.join(app.getPath('userData'), 'dubdt_takes')
   projectSessionsDir = path.join(app.getPath('userData'), 'dubdt_sessions')
+  const stagingBase = path.join(app.getPath('userData'), 'dubdt_staging')
   if (!fs.existsSync(projectTakesDir)) {
     fs.mkdirSync(projectTakesDir, { recursive: true })
   }
   if (!fs.existsSync(projectSessionsDir)) {
     fs.mkdirSync(projectSessionsDir, { recursive: true })
+  }
+  if (fs.existsSync(stagingBase)) {
+    try {
+      fs.rmSync(stagingBase, { recursive: true, force: true })
+    } catch (e) {}
   }
 }
 
@@ -395,6 +404,12 @@ function resolveTakeFilePath(take) {
   if (take.filePath && fs.existsSync(take.filePath)) {
     return take.filePath
   }
+  if (take.audioBlobUrl && typeof take.audioBlobUrl === 'string' && take.audioBlobUrl.startsWith('media:')) {
+    try {
+      const p = mediaUrlToPath(take.audioBlobUrl)
+      if (fs.existsSync(p)) return p
+    } catch (e) {}
+  }
   if (take.relativeFilePath) {
     if (projectSessionsDir && fs.existsSync(projectSessionsDir)) {
       try {
@@ -420,47 +435,7 @@ ipcMain.handle('project:save', async (_, { filePath, data }) => {
 
     const embedMedia = data.embedMedia !== false
 
-    // If user chose not to embed media, save as lightweight JSON referencing files
-    if (!embedMedia) {
-      const manifestLines = Array.isArray(data.lines)
-        ? data.lines.map((line) => {
-            if (!Array.isArray(line.takes)) return line
-            const resolvedTakes = line.takes.map((take) => {
-              const realPath = resolveTakeFilePath(take) || take.filePath
-              return {
-                ...take,
-                filePath: realPath,
-              }
-            })
-            return { ...line, takes: resolvedTakes }
-          })
-        : []
-
-      const sourceBg = data.customBgAudioPath || data.exportSettings?.customBgAudioPath || null
-      const manifest = {
-        ...data,
-        lines: manifestLines,
-        dubdtVersion: '2.0',
-        embedMedia: false,
-        updatedAt: Date.now(),
-        videoPath: data.videoPath || null,
-        videoName: data.videoName || (data.videoPath ? path.basename(data.videoPath) : null),
-        customBgAudioPath: sourceBg,
-      }
-      if (manifest.exportSettings) {
-        manifest.exportSettings.customBgAudioPath = sourceBg
-      }
-
-      const targetFolder = path.dirname(filePath)
-      if (!fs.existsSync(targetFolder)) {
-        fs.mkdirSync(targetFolder, { recursive: true })
-      }
-
-      fs.writeFileSync(filePath, JSON.stringify(manifest, null, 2), 'utf-8')
-      return { success: true, filePath, embedMedia: false }
-    }
-
-    // Staging directory for bundling
+    // Staging directory for bundling .dubdt package
     const stagingBase = path.join(app.getPath('userData'), 'dubdt_staging')
     if (!fs.existsSync(stagingBase)) {
       fs.mkdirSync(stagingBase, { recursive: true })
@@ -468,33 +443,50 @@ ipcMain.handle('project:save', async (_, { filePath, data }) => {
     const stagingDir = path.join(stagingBase, `stage_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`)
     fs.mkdirSync(stagingDir, { recursive: true })
 
+    let sourceVideoPath = data.videoPath || null
+    if (sourceVideoPath && typeof sourceVideoPath === 'string' && sourceVideoPath.startsWith('media:')) {
+      try {
+        sourceVideoPath = mediaUrlToPath(sourceVideoPath)
+      } catch (e) {}
+    }
+
+    let sourceBgPath = data.customBgAudioPath || data.exportSettings?.customBgAudioPath || null
+    if (sourceBgPath && typeof sourceBgPath === 'string' && sourceBgPath.startsWith('media:')) {
+      try {
+        sourceBgPath = mediaUrlToPath(sourceBgPath)
+      } catch (e) {}
+    }
+
     const manifest = {
       ...data,
       dubdtVersion: '2.0',
-      embedMedia: true,
+      embedMedia,
       updatedAt: Date.now(),
     }
 
-    // 1. Bundle video file directly into the .dubdt package
-    if (data.videoPath && fs.existsSync(data.videoPath)) {
-      const ext = path.extname(data.videoPath).toLowerCase() || '.mp4'
+    // 1. Video bundling (embedMedia=true) or referencing (embedMedia=false)
+    if (embedMedia && sourceVideoPath && fs.existsSync(sourceVideoPath)) {
+      const ext = path.extname(sourceVideoPath).toLowerCase() || '.mp4'
       const videoFileName = `video${ext}`
       const targetVideoPath = path.join(stagingDir, videoFileName)
 
       try {
-        fs.linkSync(data.videoPath, targetVideoPath)
+        fs.linkSync(sourceVideoPath, targetVideoPath)
       } catch {
-        fs.copyFileSync(data.videoPath, targetVideoPath)
+        fs.copyFileSync(sourceVideoPath, targetVideoPath)
       }
 
       manifest.videoFileName = videoFileName
-      manifest.videoOriginalName = data.videoName || path.basename(data.videoPath)
-      manifest.videoPath = null // portable
+      manifest.videoOriginalName = data.videoName || path.basename(sourceVideoPath)
+      manifest.videoPath = null // portable inside archive
+    } else {
+      manifest.videoFileName = null
+      manifest.videoOriginalName = data.videoName || (sourceVideoPath ? path.basename(sourceVideoPath) : null)
+      manifest.videoPath = sourceVideoPath || null
     }
 
-    // 2. Bundle custom background audio if present
-    const sourceBgPath = data.customBgAudioPath || data.exportSettings?.customBgAudioPath
-    if (sourceBgPath && fs.existsSync(sourceBgPath)) {
+    // 2. Custom background audio (M&E) bundling or referencing
+    if (embedMedia && sourceBgPath && fs.existsSync(sourceBgPath)) {
       const ext = path.extname(sourceBgPath).toLowerCase() || '.mp3'
       const bgFileName = `custom_bg${ext}`
       const targetBgPath = path.join(stagingDir, bgFileName)
@@ -513,14 +505,14 @@ ipcMain.handle('project:save', async (_, { filePath, data }) => {
       }
     } else {
       manifest.customBgAudioFileName = null
-      manifest.customBgAudioPath = null
+      manifest.customBgAudioPath = sourceBgPath
       if (manifest.exportSettings) {
-        manifest.exportSettings.customBgAudioPath = null
+        manifest.exportSettings.customBgAudioPath = sourceBgPath
         manifest.exportSettings.customBgAudioFileName = null
       }
     }
 
-    // 3. Bundle takes
+    // 3. ALWAYS bundle all recording takes into the .dubdt package (whether embedMedia is true or false)
     const takesStagingDir = path.join(stagingDir, 'takes')
     fs.mkdirSync(takesStagingDir, { recursive: true })
 
@@ -580,7 +572,7 @@ ipcMain.handle('project:save', async (_, { filePath, data }) => {
       fs.rmSync(stagingDir, { recursive: true, force: true })
     } catch (e) {}
 
-    return { success: true, filePath, embedMedia: true }
+    return { success: true, filePath, embedMedia }
   } catch (err) {
     console.error('Erro ao salvar arquivo de projeto (.dubdt):', err)
     throw err
@@ -677,9 +669,9 @@ ipcMain.handle('project:load', async (_, filePath) => {
       }
 
       project = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'))
-      project.embedMedia = true
+      project.embedMedia = project.embedMedia !== false
 
-      // Locate embedded video
+      // Locate video (embedded or referenced)
       if (project.videoFileName) {
         const extractedVideoPath = path.join(sessionDir, project.videoFileName)
         if (fs.existsSync(extractedVideoPath)) {
@@ -691,11 +683,17 @@ ipcMain.handle('project:load', async (_, filePath) => {
           project.videoPath = null
           project.videoMediaUrl = null
         }
-      } else if (project.videoPath && fs.existsSync(project.videoPath)) {
-        project.videoMediaUrl = pathToMediaUrl(project.videoPath)
+      } else if (project.videoPath) {
+        if (fs.existsSync(project.videoPath)) {
+          project.videoMediaUrl = pathToMediaUrl(project.videoPath)
+          project.videoName = project.videoOriginalName || project.videoName || path.basename(project.videoPath)
+        } else {
+          warnings.push(`Vídeo referenciado não encontrado no caminho original: ${project.videoPath}`)
+          project.videoMediaUrl = null
+        }
       }
 
-      // Locate embedded custom background audio
+      // Locate custom background audio (embedded or referenced)
       if (project.customBgAudioFileName) {
         const extractedBgPath = path.join(sessionDir, project.customBgAudioFileName)
         if (fs.existsSync(extractedBgPath)) {
@@ -712,10 +710,19 @@ ipcMain.handle('project:load', async (_, filePath) => {
             project.exportSettings.customBgAudioPath = null
           }
         }
-      } else if (project.customBgAudioPath && fs.existsSync(project.customBgAudioPath)) {
-        project.customBgAudioMediaUrl = pathToMediaUrl(project.customBgAudioPath)
-        if (project.exportSettings) {
-          project.exportSettings.customBgAudioPath = project.customBgAudioPath
+      } else if (project.customBgAudioPath) {
+        if (fs.existsSync(project.customBgAudioPath)) {
+          project.customBgAudioMediaUrl = pathToMediaUrl(project.customBgAudioPath)
+          if (project.exportSettings) {
+            project.exportSettings.customBgAudioPath = project.customBgAudioPath
+          }
+        } else {
+          warnings.push(`Trilha de áudio M&E referenciada não encontrada no caminho original: ${project.customBgAudioPath}`)
+          project.customBgAudioPath = null
+          project.customBgAudioMediaUrl = null
+          if (project.exportSettings) {
+            project.exportSettings.customBgAudioPath = null
+          }
         }
       } else {
         project.customBgAudioPath = null
@@ -735,6 +742,10 @@ ipcMain.handle('project:load', async (_, filePath) => {
                 if (fs.existsSync(extractedTakePath)) {
                   take.filePath = extractedTakePath
                   take.audioBlobUrl = pathToMediaUrl(extractedTakePath)
+                } else if (take.filePath && fs.existsSync(take.filePath)) {
+                  take.audioBlobUrl = pathToMediaUrl(take.filePath)
+                } else {
+                  warnings.push(`Gravação não encontrada: ${take.relativeFilePath}`)
                 }
               } else if (take.filePath && fs.existsSync(take.filePath)) {
                 take.audioBlobUrl = pathToMediaUrl(take.filePath)
@@ -937,7 +948,7 @@ ipcMain.handle('ffmpeg:extractAudioWaveform', async (_, videoPath) => {
 
 // 6. Save recorded audio take
 ipcMain.handle('fs:saveTakeAudio', async (_, { lineId, takeNumber, buffer }) => {
-  const filename = `take_${lineId}_#${takeNumber}_${Date.now()}.webm`
+  const filename = `take_${lineId}_t${takeNumber}_${Date.now()}.webm`
   const filePath = path.join(projectTakesDir, filename)
   fs.writeFileSync(filePath, Buffer.from(buffer))
   return {
