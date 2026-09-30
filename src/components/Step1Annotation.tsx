@@ -95,20 +95,21 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   // Active playing line preview
   const [playingLineId, setPlayingLineId] = useState<string | null>(null)
   const playingLineRef = useRef<DialogueLine | null>(null)
+  // Flags to prevent race conditions during region sync and line seeking
+  const isSyncingRegionsRef = useRef<boolean>(false)
+  const isSeekingToLineRef = useRef<boolean>(false)
   const linesRef = useRef<DialogueLine[]>(lines)
   linesRef.current = lines
 
   // Pause playback when tab becomes inactive
   useEffect(() => {
     if (isActive === false) {
-      if (wsRef.current && wsRef.current.isPlaying()) {
-        wsRef.current.pause()
-      }
       if (videoRef.current && !videoRef.current.paused) {
         videoRef.current.pause()
       }
       setPlayingLineId(null)
       playingLineRef.current = null
+      isSeekingToLineRef.current = false
       setIsPlaying(false)
       setContextMenu(null)
     }
@@ -149,40 +150,45 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       const wsRegions = wsRegionsRef.current
       if (!wsRegions) return
 
-      wsRegions.clearRegions()
+      isSyncingRegionsRef.current = true
+      try {
+        wsRegions.clearRegions()
 
-      // 1. Active layer regions: fully editable and interactive
-      const activeLayerLines = allLines.filter((l) => (l.layer || 1) === layer)
-      activeLayerLines.forEach((l) => {
-        const reg = wsRegions.addRegion({
-          id: l.id,
-          start: l.startTime,
-          end: l.endTime,
-          content: l.text,
-          color: 'rgba(255, 255, 255, 0.14)',
-          drag: false,
-          resize: true,
+        // 1. Active layer regions: fully editable and interactive
+        const activeLayerLines = allLines.filter((l) => (l.layer || 1) === layer)
+        activeLayerLines.forEach((l) => {
+          const reg = wsRegions.addRegion({
+            id: l.id,
+            start: l.startTime,
+            end: l.endTime,
+            content: l.text,
+            color: 'rgba(255, 255, 255, 0.14)',
+            drag: false,
+            resize: true,
+          })
+          attachRegionContextMenu(reg)
         })
-        attachRegionContextMenu(reg)
-      })
 
-      // 2. Ghost markers for other layers: faint, non-interactive visual guide
-      const otherLayerLines = allLines.filter((l) => (l.layer || 1) !== layer)
-      otherLayerLines.forEach((l) => {
-        const reg = wsRegions.addRegion({
-          id: `ghost_${l.id}`,
-          start: l.startTime,
-          end: l.endTime,
-          content: `[C${l.layer || 1}] ${l.text}`,
-          color: 'rgba(100, 116, 139, 0.08)',
-          drag: false,
-          resize: false,
+        // 2. Ghost markers for other layers: faint, non-interactive visual guide
+        const otherLayerLines = allLines.filter((l) => (l.layer || 1) !== layer)
+        otherLayerLines.forEach((l) => {
+          const reg = wsRegions.addRegion({
+            id: `ghost_${l.id}`,
+            start: l.startTime,
+            end: l.endTime,
+            content: `[C${l.layer || 1}] ${l.text}`,
+            color: 'rgba(100, 116, 139, 0.08)',
+            drag: false,
+            resize: false,
+          })
+          if (reg.element) {
+            reg.element.style.pointerEvents = 'none'
+            reg.element.style.opacity = '0.5'
+          }
         })
-        if (reg.element) {
-          reg.element.style.pointerEvents = 'none'
-          reg.element.style.opacity = '0.5'
-        }
-      })
+      } finally {
+        isSyncingRegionsRef.current = false
+      }
     },
     [attachRegionContextMenu]
   )
@@ -275,52 +281,38 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     })
 
     ws.on('timeupdate', (time) => {
-      setCurrentTime(time)
-      const targetLine = playingLineRef.current
-      if (targetLine && time >= targetLine.endTime) {
-        ws.pause()
-        if (videoRef.current) {
-          videoRef.current.pause()
-          videoRef.current.currentTime = targetLine.startTime
-        }
-        ws.setTime(targetLine.startTime)
-        setPlayingLineId(null)
-        playingLineRef.current = null
-        setIsPlaying(false)
-      }
+      // Handled natively by WaveSurfer and video onTimeUpdate
     })
 
     ws.on('interaction', () => {
       setPlayingLineId(null)
       playingLineRef.current = null
+      isSeekingToLineRef.current = false
     })
 
     ws.on('play', () => {
       setIsPlaying(true)
-      if (videoRef.current && videoRef.current.paused) {
-        videoRef.current.play().catch(() => {})
-      }
     })
 
     ws.on('pause', () => {
       setIsPlaying(false)
-      if (videoRef.current && !videoRef.current.paused) {
-        videoRef.current.pause()
-      }
     })
 
     wsRegions.on('region-created', (region: any) => {
+      // Ignore programmatic region creations during sync or for ghost markers
+      if (isSyncingRegionsRef.current) return
+      if (region.id && String(region.id).startsWith('ghost_')) return
+      if (linesRef.current.some((l) => l.id === region.id)) return
+
       region.setOptions({ drag: false, resize: true })
       attachRegionContextMenu(region)
-      if (!linesRef.current.some((l) => l.id === region.id)) {
-        setPendingRegion({
-          region,
-          start: region.start,
-          end: region.end,
-        })
-        setPendingText('')
-        setTimeout(() => inputRef.current?.focus(), 50)
-      }
+      setPendingRegion({
+        region,
+        start: region.start,
+        end: region.end,
+      })
+      setPendingText('')
+      setTimeout(() => inputRef.current?.focus(), 50)
     })
 
     wsRegions.on('region-updated', (region: any) => {
@@ -337,8 +329,8 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       // Clicking a region seeks there freely without clamping continuous playback
       setPlayingLineId(null)
       playingLineRef.current = null
+      isSeekingToLineRef.current = false
       if (videoRef.current) videoRef.current.currentTime = region.start
-      ws.setTime(region.start)
     })
 
     return () => {
@@ -369,51 +361,37 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     }
   }, [currentLayer, linesSignature, syncRegions])
 
+  // Clear any active pending prompt when switching layer
+  useEffect(() => {
+    if (pendingRegion) {
+      try {
+        pendingRegion.region.remove()
+      } catch (e) {}
+      setPendingRegion(null)
+      setPendingText('')
+    }
+  }, [currentLayer])
+
   const togglePlay = useCallback(() => {
     setPlayingLineId(null)
     playingLineRef.current = null
-    const ws = wsRef.current
+    isSeekingToLineRef.current = false
+
     const video = videoRef.current
-    if (!ws && !video) return
+    if (!video) return
 
-    if (video && (video.ended || (duration > 0 && video.currentTime >= duration - 0.1))) {
+    if (video.ended || (duration > 0 && video.currentTime >= duration - 0.1)) {
       video.currentTime = 0
-      if (ws) ws.setTime(0)
     }
 
-    const currentlyPlaying = isPlaying || (ws ? ws.isPlaying() : false) || (video ? !video.paused : false)
-
-    if (currentlyPlaying) {
-      if (ws && ws.isPlaying()) ws.pause()
-      if (video && !video.paused) video.pause()
-      setIsPlaying(false)
+    if (!video.paused) {
+      video.pause()
     } else {
-      if (video && video.seeking) {
-        const onSeeked = () => {
-          video.removeEventListener('seeked', onSeeked)
-          if (ws) {
-            ws.play().catch(console.error)
-          } else {
-            video.play().catch(console.error)
-          }
-          setIsPlaying(true)
-        }
-        video.addEventListener('seeked', onSeeked, { once: true })
-      } else {
-        if (ws) {
-          ws.play().then(() => {
-            if (video && video.paused) video.play().catch(() => {})
-            setIsPlaying(true)
-          }).catch((err) => {
-            console.error('ws.play erro, fallback para video.play:', err)
-            if (video) video.play().then(() => setIsPlaying(true)).catch(console.error)
-          })
-        } else if (video) {
-          video.play().then(() => setIsPlaying(true)).catch(console.error)
-        }
-      }
+      video.play().catch((err) => {
+        console.error('Erro ao reproduzir vídeo:', err)
+      })
     }
-  }, [isPlaying, duration])
+  }, [duration])
 
   useEffect(() => {
     if (!isActive) return
@@ -460,72 +438,57 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   }, [isActive, togglePlay])
 
   const handleVideoTimeUpdate = () => {
-    if (videoRef.current) {
-      const vTime = videoRef.current.currentTime
-      setCurrentTime(vTime)
+    const video = videoRef.current
+    if (!video) return
 
-      const targetLine = playingLineRef.current
-      if (targetLine && vTime >= targetLine.endTime) {
-        wsRef.current?.pause()
-        videoRef.current.pause()
-        videoRef.current.currentTime = targetLine.startTime
-        if (wsRef.current) wsRef.current.setTime(targetLine.startTime)
-        setPlayingLineId(null)
-        playingLineRef.current = null
-        setIsPlaying(false)
-      }
+    const vTime = video.currentTime
+    setCurrentTime(vTime)
+
+    if (isSeekingToLineRef.current) return
+
+    const targetLine = playingLineRef.current
+    if (targetLine && vTime >= targetLine.startTime && vTime >= targetLine.endTime) {
+      video.pause()
+      video.currentTime = targetLine.startTime
+      setPlayingLineId(null)
+      playingLineRef.current = null
+      setIsPlaying(false)
     }
   }
 
   const handlePlayLine = (line: DialogueLine) => {
-    if (playingLineId === line.id) {
-      if (videoRef.current) videoRef.current.pause()
-      if (wsRef.current) wsRef.current.pause()
+    const video = videoRef.current
+    if (!video) return
+
+    if (playingLineId === line.id && !video.paused) {
+      video.pause()
       setPlayingLineId(null)
       playingLineRef.current = null
+      isSeekingToLineRef.current = false
       setIsPlaying(false)
       return
     }
 
     setPlayingLineId(line.id)
-    playingLineRef.current = null // Avoid race condition while seeking to startTime
+    playingLineRef.current = line
+    isSeekingToLineRef.current = true
 
-    const video = videoRef.current
-    const ws = wsRef.current
+    video.pause()
+    video.currentTime = line.startTime
 
-    if (video) {
-      video.pause()
-      if (ws) ws.pause()
+    const startPlayback = () => {
+      isSeekingToLineRef.current = false
+      video.play().then(() => {
+        setIsPlaying(true)
+      }).catch((err) => {
+        console.error('Erro ao dar play no vídeo da fala:', err)
+      })
+    }
 
-      video.currentTime = line.startTime
-      if (ws) ws.setTime(line.startTime)
-
-      const startPlayback = () => {
-        playingLineRef.current = line
-        video.play().then(() => {
-          if (ws && !ws.isPlaying()) ws.play().catch(() => {})
-          setIsPlaying(true)
-        }).catch((err) => {
-          console.error('Erro ao dar play no vídeo da fala:', err)
-          if (ws) {
-            ws.play().then(() => setIsPlaying(true)).catch(console.error)
-          }
-        })
-      }
-
-      if (video.seeking) {
-        const onSeeked = () => {
-          video.removeEventListener('seeked', onSeeked)
-          startPlayback()
-        }
-        video.addEventListener('seeked', onSeeked, { once: true })
-      } else {
-        startPlayback()
-      }
-    } else if (ws) {
-      ws.setTime(line.startTime)
-      playingLineRef.current = line
-      ws.play().then(() => setIsPlaying(true)).catch(console.error)
+    if (video.seeking) {
+      video.addEventListener('seeked', startPlayback, { once: true })
+    } else {
+      setTimeout(startPlayback, 20)
     }
   }
 
@@ -606,20 +569,17 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     if (!pendingRegion) return
     const text = pendingText.trim()
     if (!text) {
-      pendingRegion.region.remove()
+      try {
+        pendingRegion.region.remove()
+      } catch (e) {}
       setPendingRegion(null)
       return
     }
 
     const newLineId = `line_${Date.now()}`
-    pendingRegion.region.setOptions({
-      id: newLineId,
-      content: text,
-      color: 'rgba(255, 255, 255, 0.12)',
-      drag: false,
-      resize: true,
-    })
-    attachRegionContextMenu(pendingRegion.region)
+    try {
+      pendingRegion.region.remove()
+    } catch (e) {}
 
     const newLine: DialogueLine = {
       id: newLineId,
@@ -631,14 +591,16 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       layer: currentLayer,
     }
 
-    setLines((prev) => [...prev, newLine].sort((a, b) => a.startTime - b.startTime))
     setPendingRegion(null)
     setPendingText('')
+    setLines((prev) => [...prev, newLine].sort((a, b) => a.startTime - b.startTime))
   }
 
   const handleCancelPendingLine = () => {
     if (pendingRegion) {
-      pendingRegion.region.remove()
+      try {
+        pendingRegion.region.remove()
+      } catch (e) {}
       setPendingRegion(null)
       setPendingText('')
     }
@@ -648,12 +610,16 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     setLines((prev) => prev.filter((l) => l.id !== id))
     const regions = wsRegionsRef.current?.getRegions() || []
     const target = regions.find((r: any) => r.id === id)
-    if (target) target.remove()
+    if (target) {
+      try {
+        target.remove()
+      } catch (e) {}
+    }
     if (playingLineId === id) {
-      videoRef.current?.pause()
-      wsRef.current?.pause()
+      if (videoRef.current) videoRef.current.pause()
       setPlayingLineId(null)
       playingLineRef.current = null
+      isSeekingToLineRef.current = false
       setIsPlaying(false)
     }
     if (editingModalLine?.id === id) {
@@ -685,15 +651,18 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   const handleSeekToLine = (line: DialogueLine) => {
     setPlayingLineId(null)
     playingLineRef.current = null
+    isSeekingToLineRef.current = false
     setIsPlaying(false)
 
     if (videoRef.current) {
       videoRef.current.pause()
       videoRef.current.currentTime = line.startTime
     }
-    if (wsRef.current) {
-      wsRef.current.pause()
-      wsRef.current.setTime(line.startTime)
+  }
+
+  const handleLoadedMetadata = () => {
+    if (videoRef.current && videoRef.current.duration > 0) {
+      setDuration(videoRef.current.duration)
     }
   }
 
@@ -771,6 +740,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
                 src={videoMediaUrl}
                 preload="auto"
                 playsInline
+                onLoadedMetadata={handleLoadedMetadata}
                 onTimeUpdate={handleVideoTimeUpdate}
                 onClick={togglePlay}
                 className="max-h-full max-w-full rounded object-contain cursor-pointer"
