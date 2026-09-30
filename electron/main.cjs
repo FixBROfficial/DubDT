@@ -235,6 +235,51 @@ ipcMain.handle('dialog:selectProjectFileToSave', async (_, defaultName) => {
   return filePath
 })
 
+// Helper: check if video has an audio stream
+function hasAudioStream(filePath) {
+  return new Promise((resolve) => {
+    if (!filePath || !fs.existsSync(filePath)) return resolve(false)
+    const proc = spawn('ffprobe', [
+      '-v', 'error',
+      '-select_streams', 'a',
+      '-show_entries', 'stream=codec_type',
+      '-of', 'csv=p=0',
+      filePath,
+    ], { stdio: ['ignore', 'pipe', 'ignore'] })
+    let out = ''
+    proc.stdout.on('data', (d) => { out += d.toString() })
+    proc.on('close', () => {
+      resolve(out.trim().length > 0)
+    })
+    proc.on('error', () => resolve(false))
+  })
+}
+
+// Helper: robustly locate take audio on disk
+function resolveTakeFilePath(take) {
+  if (!take) return null
+  if (take.filePath && fs.existsSync(take.filePath)) {
+    return take.filePath
+  }
+  if (take.relativeFilePath) {
+    if (projectSessionsDir && fs.existsSync(projectSessionsDir)) {
+      try {
+        const sessions = fs.readdirSync(projectSessionsDir)
+        for (const s of sessions) {
+          const candidate = path.join(projectSessionsDir, s, take.relativeFilePath)
+          if (fs.existsSync(candidate)) return candidate
+        }
+      } catch (e) {}
+    }
+  }
+  const baseName = path.basename(take.relativeFilePath || take.filePath || '')
+  if (baseName && projectTakesDir && fs.existsSync(projectTakesDir)) {
+    const inTakes = path.join(projectTakesDir, baseName)
+    if (fs.existsSync(inTakes)) return inTakes
+  }
+  return null
+}
+
 ipcMain.handle('project:save', async (_, { filePath, data }) => {
   try {
     addRecentProject(filePath)
@@ -243,8 +288,23 @@ ipcMain.handle('project:save', async (_, { filePath, data }) => {
 
     // If user chose not to embed media, save as lightweight JSON referencing files
     if (!embedMedia) {
+      const manifestLines = Array.isArray(data.lines)
+        ? data.lines.map((line) => {
+            if (!Array.isArray(line.takes)) return line
+            const resolvedTakes = line.takes.map((take) => {
+              const realPath = resolveTakeFilePath(take) || take.filePath
+              return {
+                ...take,
+                filePath: realPath,
+              }
+            })
+            return { ...line, takes: resolvedTakes }
+          })
+        : []
+
       const manifest = {
         ...data,
+        lines: manifestLines,
         dubdtVersion: '2.0',
         embedMedia: false,
         updatedAt: Date.now(),
@@ -319,15 +379,16 @@ ipcMain.handle('project:save', async (_, { filePath, data }) => {
         if (!Array.isArray(line.takes)) return line
 
         const bundledTakes = line.takes.map((take) => {
-          if (take.filePath && fs.existsSync(take.filePath)) {
-            const takeFileName = path.basename(take.filePath)
+          const sourcePath = resolveTakeFilePath(take) || take.filePath
+          if (sourcePath && fs.existsSync(sourcePath)) {
+            const takeFileName = path.basename(sourcePath)
             const targetTakePath = path.join(takesStagingDir, takeFileName)
 
             if (!fs.existsSync(targetTakePath)) {
               try {
-                fs.linkSync(take.filePath, targetTakePath)
+                fs.linkSync(sourcePath, targetTakePath)
               } catch {
-                fs.copyFileSync(take.filePath, targetTakePath)
+                fs.copyFileSync(sourcePath, targetTakePath)
               }
             }
 
@@ -747,7 +808,8 @@ function getVoiceFilter(preset, volume, enableNoiseSuppression = false, noiseSup
   }
 
   if (preset === 'loudnorm') {
-    filter += ',loudnorm=I=-16:TP=-1.5:LRA=11'
+    // Vocal dynamics compressor/leveler: safe for dialogue takes without timestamp/PTS corruption
+    filter += ',acompressor=threshold=-16dB:ratio=4:attack=5:release=50:makeup=2'
   } else if (preset === 'radio') {
     filter += ',highpass=f=300,lowpass=f=3400,volume=1.2'
   } else if (preset === 'reverb') {
@@ -773,16 +835,24 @@ ipcMain.handle('ffmpeg:exportMix', async (_, options) => {
     lines, // array of dialogue lines with active takes
   } = options
 
+  if (!videoPath || !fs.existsSync(videoPath)) {
+    throw new Error('Arquivo de vídeo não encontrado.')
+  }
+
+  const duration = await getVideoDuration(videoPath)
+  const videoHasAudio = await hasAudioStream(videoPath)
+
   return new Promise((resolve, reject) => {
     // Collect active takes with their timestamps
     const activeTakes = []
-    lines.forEach((line) => {
+    ;(lines || []).forEach((line) => {
       if (line.takes && line.takes.length > 0) {
-        const take = line.takes[line.activeTakeIndex || 0]
-        if (take && take.filePath && fs.existsSync(take.filePath)) {
+        const take = line.takes[line.activeTakeIndex || 0] || line.takes[0]
+        const resolvedPath = resolveTakeFilePath(take)
+        if (resolvedPath && fs.existsSync(resolvedPath)) {
           activeTakes.push({
-            filePath: take.filePath,
-            startTime: line.startTime,
+            filePath: resolvedPath,
+            startTime: Math.max(0, line.startTime || 0),
           })
         }
       }
@@ -819,40 +889,51 @@ ipcMain.handle('ffmpeg:exportMix', async (_, options) => {
     const filterParts = []
     const mixedAudioInputs = []
 
-    // 1. Background audio track
+    // 1. Base timeline silence (spans full video duration)
+    // Ensures audio timeline always starts at 0s, ends at exact video length, and never has truncated/missing packets
+    if (duration > 0) {
+      filterParts.push(`anullsrc=r=48000:cl=stereo,atrim=end=${duration}[base_silence]`)
+      mixedAudioInputs.push('[base_silence]')
+    }
+
+    // 2. Background audio track
     if (customBgIdx !== -1) {
-      filterParts.push(`[${customBgIdx}:a]volume=${customBgAudioVolume}[bg_audio]`)
+      filterParts.push(`[${customBgIdx}:a]volume=${customBgAudioVolume},aresample=48000,aformat=channel_layouts=stereo:sample_rates=48000[bg_audio]`)
       mixedAudioInputs.push('[bg_audio]')
-    } else if (includeOriginalAudio) {
-      filterParts.push(`[${videoInputIdx}:a]volume=${originalAudioVolume}[bg_audio]`)
+    } else if (includeOriginalAudio && videoHasAudio) {
+      filterParts.push(`[${videoInputIdx}:a]volume=${originalAudioVolume},aresample=48000,aformat=channel_layouts=stereo:sample_rates=48000[bg_audio]`)
       mixedAudioInputs.push('[bg_audio]')
     }
 
-    // 2. Dialogue takes with delay, voice effects, and modulatable noise suppression
+    // 3. Dialogue takes with delay, voice effects, and modulatable noise suppression
     takeInputIndices.forEach((t, i) => {
       const delayMs = Math.round(t.startTime * 1000)
       const voiceFilter = getVoiceFilter(voicePreset, recordedVoicesVolume, enableNoiseSuppression, noiseSuppressionLevel)
       const outLabel = `voice_${i}`
-      filterParts.push(`[${t.idx}:a]${voiceFilter},adelay=${delayMs}|${delayMs}[${outLabel}]`)
+      if (delayMs > 0) {
+        filterParts.push(`[${t.idx}:a]${voiceFilter},aresample=48000,aformat=channel_layouts=stereo:sample_rates=48000,adelay=${delayMs}|${delayMs},asetpts=PTS-STARTPTS[${outLabel}]`)
+      } else {
+        filterParts.push(`[${t.idx}:a]${voiceFilter},aresample=48000,aformat=channel_layouts=stereo:sample_rates=48000,asetpts=PTS-STARTPTS[${outLabel}]`)
+      }
       mixedAudioInputs.push(`[${outLabel}]`)
     })
 
-    // Mix all audio streams
+    // 4. Mix all audio streams safely
     if (mixedAudioInputs.length > 0) {
-      filterParts.push(`${mixedAudioInputs.join('')}amix=inputs=${mixedAudioInputs.length}:dropout_transition=0:normalize=0[aout]`)
+      filterParts.push(`${mixedAudioInputs.join('')}amix=inputs=${mixedAudioInputs.length}:dropout_transition=0:normalize=0,alimiter=limit=-1.0dB,aresample=48000,aformat=channel_layouts=stereo:sample_rates=48000[aout]`)
     } else {
-      // If nothing selected, create silent audio
-      filterParts.push('anullsrc=r=44100:cl=stereo[aout]')
+      filterParts.push('anullsrc=r=48000:cl=stereo,atrim=end=1[aout]')
     }
 
     args.push('-filter_complex', filterParts.join(';'))
 
     if (exportType === 'video') {
-      args.push('-map', `${videoInputIdx}:v`)
+      args.push('-map', `${videoInputIdx}:v:0`)
       args.push('-map', '[aout]')
       args.push('-c:v', 'copy')
       args.push('-c:a', 'aac')
       args.push('-b:a', '192k')
+      args.push('-movflags', '+faststart')
     } else {
       args.push('-map', '[aout]')
       if (outputPath.endsWith('.mp3')) {
@@ -895,14 +976,20 @@ ipcMain.handle('ffmpeg:exportClips', async (_, options) => {
     noiseSuppressionLevel,
   } = options
 
+  if (!videoPath || !fs.existsSync(videoPath)) {
+    throw new Error('Arquivo de vídeo não encontrado.')
+  }
+
+  const videoHasAudio = await hasAudioStream(videoPath)
   const results = []
 
-  for (let i = 0; i < lines.length; i++) {
+  for (let i = 0; i < (lines || []).length; i++) {
     const line = lines[i]
     if (!line.takes || line.takes.length === 0) continue
 
-    const activeTake = line.takes[line.activeTakeIndex || 0]
-    if (!activeTake || !activeTake.filePath || !fs.existsSync(activeTake.filePath)) continue
+    const activeTake = line.takes[line.activeTakeIndex || 0] || line.takes[0]
+    const resolvedTakePath = resolveTakeFilePath(activeTake)
+    if (!resolvedTakePath || !fs.existsSync(resolvedTakePath)) continue
 
     const safeText = (line.text || `fala_${i + 1}`)
       .replace(/[/\\?%*:|"<>]/g, '')
@@ -924,24 +1011,24 @@ ipcMain.handle('ffmpeg:exportClips', async (_, options) => {
         args.push('-ss', String(line.startTime))
         args.push('-t', String(duration))
         args.push('-i', videoPath)
-        args.push('-i', activeTake.filePath)
+        args.push('-i', resolvedTakePath)
 
-        if (includeBackground) {
+        if (includeBackground && videoHasAudio) {
           args.push(
             '-filter_complex',
-            `[1:a]${voiceFilter}[v];[0:a][v]amix=inputs=2:dropout_transition=0:normalize=0[aout]`
+            `[1:a]${voiceFilter},aresample=48000,aformat=channel_layouts=stereo:sample_rates=48000[v];[0:a]aresample=48000,aformat=channel_layouts=stereo:sample_rates=48000[bg];[bg][v]amix=inputs=2:dropout_transition=0:normalize=0,alimiter=limit=-1.0dB[aout]`
           )
-          args.push('-map', '0:v', '-map', '[aout]')
+          args.push('-map', '0:v:0', '-map', '[aout]')
         } else {
-          args.push('-filter_complex', `[1:a]${voiceFilter}[aout]`)
-          args.push('-map', '0:v', '-map', '[aout]')
+          args.push('-filter_complex', `[1:a]${voiceFilter},aresample=48000,aformat=channel_layouts=stereo:sample_rates=48000,alimiter=limit=-1.0dB[aout]`)
+          args.push('-map', '0:v:0', '-map', '[aout]')
         }
 
-        args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', clipOutputPath)
+        args.push('-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', clipOutputPath)
       } else {
         // Audio only clip
-        args.push('-i', activeTake.filePath)
-        args.push('-af', voiceFilter)
+        args.push('-i', resolvedTakePath)
+        args.push('-af', `${voiceFilter},aresample=48000,aformat=channel_layouts=stereo:sample_rates=48000,alimiter=limit=-1.0dB`)
         args.push('-c:a', 'pcm_s16le', clipOutputPath)
       }
 
