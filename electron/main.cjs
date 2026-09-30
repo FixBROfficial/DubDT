@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, protocol, net } = require('electron')
+const { app, BrowserWindow, ipcMain, dialog, protocol, net, session } = require('electron')
 const path = require('path')
 const fs = require('fs')
 const crypto = require('crypto')
@@ -6,10 +6,59 @@ const tar = require('tar')
 const { spawn } = require('child_process')
 const { Readable } = require('stream')
 const { pathToFileURL, fileURLToPath } = require('url')
+// Disable hardware acceleration to completely eliminate GPU compositor presentation freezes,
+// D3D11 swapchain locks, and video presentation stalls on Windows
+app.disableHardwareAcceleration()
+
+// CLI switches to block HTTP disk cache, GPU shader disk caches, and next-gen SkiaGraphite cache locks
 app.commandLine.appendSwitch('no-sandbox')
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
-// Avoid GPU persistent shader disk cache file-locking collisions that cause video presentation freezes
+app.commandLine.appendSwitch('disable-http-cache')
+app.commandLine.appendSwitch('disk-cache-size', '0')
+app.commandLine.appendSwitch('media-cache-size', '0')
 app.commandLine.appendSwitch('disable-gpu-shader-disk-cache')
+app.commandLine.appendSwitch('disable-features', 'CalculateNativeWinOcclusion,SkiaGraphite,SkiaGraphiteUsePersistentCache')
+app.commandLine.appendSwitch('disable-skia-graphite')
+app.commandLine.appendSwitch('disable-direct-composition-video-overlays')
+app.commandLine.appendSwitch('disable-background-timer-throttling')
+app.commandLine.appendSwitch('disable-renderer-backgrounding')
+
+// Clean up any HTTP disk cache and GPU cache artifacts on launch and quit
+function clearCacheDirectories() {
+  try {
+    const appData = app.getPath('appData')
+    const possibleUserDatas = [
+      app.getPath('userData'),
+      path.join(appData, 'dubdt'),
+      path.join(appData, 'DubDT'),
+      path.join(appData, 'Electron'),
+    ]
+    const cacheDirs = [
+      'Cache',
+      'Code Cache',
+      'GPUPersistentCache',
+      'GPUCache',
+      'DawnGraphiteCache',
+      'DawnWebGPUCache',
+      'DawnCache',
+      'GrShaderCache',
+      'ShaderCache',
+    ]
+    for (const uData of possibleUserDatas) {
+      if (!fs.existsSync(uData)) continue
+      for (const dir of cacheDirs) {
+        const fullPath = path.join(uData, dir)
+        if (fs.existsSync(fullPath)) {
+          try {
+            fs.rmSync(fullPath, { recursive: true, force: true })
+          } catch (e) {}
+        }
+      }
+    }
+  } catch (e) {}
+}
+
+clearCacheDirectories()
 
 // Register media scheme as privileged for streaming video/audio
 protocol.registerSchemesAsPrivileged([
@@ -31,6 +80,7 @@ let projectTakesDir = null
 let projectSessionsDir = null
 
 function ensureDirectories() {
+  clearCacheDirectories()
   projectTakesDir = path.join(app.getPath('userData'), 'dubdt_takes')
   projectSessionsDir = path.join(app.getPath('userData'), 'dubdt_sessions')
   const stagingBase = path.join(app.getPath('userData'), 'dubdt_staging')
@@ -45,6 +95,28 @@ function ensureDirectories() {
       fs.rmSync(stagingBase, { recursive: true, force: true })
     } catch (e) {}
   }
+}
+
+function getFfmpegPath() {
+  const binaryName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg'
+  if (app.isPackaged) {
+    const packagedPath = path.join(process.resourcesPath, 'bin', binaryName)
+    if (fs.existsSync(packagedPath)) return packagedPath
+  }
+  const localPath = path.join(__dirname, '../bin', binaryName)
+  if (fs.existsSync(localPath)) return localPath
+  return 'ffmpeg'
+}
+
+function getFfprobePath() {
+  const binaryName = process.platform === 'win32' ? 'ffprobe.exe' : 'ffprobe'
+  if (app.isPackaged) {
+    const packagedPath = path.join(process.resourcesPath, 'bin', binaryName)
+    if (fs.existsSync(packagedPath)) return packagedPath
+  }
+  const localPath = path.join(__dirname, '../bin', binaryName)
+  if (fs.existsSync(localPath)) return localPath
+  return 'ffprobe'
 }
 
 function pathToMediaUrl(filePath) {
@@ -106,6 +178,9 @@ const MEDIA_CORS_HEADERS = {
   'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
   'Access-Control-Allow-Headers': 'Range, Content-Type',
   'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+  'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+  'Pragma': 'no-cache',
+  'Expires': '0',
 }
 
 function registerMediaProtocol() {
@@ -141,26 +216,12 @@ function registerMediaProtocol() {
       }
 
       const rangeHeader = request.headers.get('Range') || request.headers.get('range')
-      const maxChunkSize = 4 * 1024 * 1024 // 4 MB chunk max for open-ended range streaming
 
       if (rangeHeader) {
         const matches = rangeHeader.match(/bytes=(\d*)-(\d*)/)
         if (matches) {
-          let start
-          let end
-          if (matches[1] && matches[2]) {
-            start = parseInt(matches[1], 10)
-            end = parseInt(matches[2], 10)
-          } else if (matches[1]) {
-            start = parseInt(matches[1], 10)
-            end = Math.min(start + maxChunkSize - 1, fileSize - 1)
-          } else if (matches[2]) {
-            start = Math.max(0, fileSize - parseInt(matches[2], 10))
-            end = fileSize - 1
-          } else {
-            start = 0
-            end = Math.min(maxChunkSize - 1, fileSize - 1)
-          }
+          let start = matches[1] ? parseInt(matches[1], 10) : 0
+          let end = matches[2] ? parseInt(matches[2], 10) : fileSize - 1
 
           if (isNaN(start) || start < 0) start = 0
           if (isNaN(end) || end >= fileSize) end = fileSize - 1
@@ -196,21 +257,19 @@ function registerMediaProtocol() {
         }
       }
 
-      // No range header: return first 4MB chunk or full file if smaller, with Accept-Ranges
-      const initialEnd = Math.min(maxChunkSize - 1, fileSize - 1)
-      const nodeStream = fs.createReadStream(targetPath, { start: 0, end: initialEnd })
+      // No range header: stream full file with status 200 and Accept-Ranges: bytes
+      const nodeStream = fs.createReadStream(targetPath)
       nodeStream.on('error', (err) => {
         if (err.name === 'AbortError' || err.code === 'ABORT_ERR' || err.message?.includes('aborted')) return
         console.warn('[media protocol] Stream error:', err.message)
       })
       const webStream = Readable.toWeb(nodeStream)
       return new Response(webStream, {
-        status: 206,
+        status: 200,
         headers: {
           ...MEDIA_CORS_HEADERS,
-          'Content-Range': `bytes 0-${initialEnd}/${fileSize}`,
           'Accept-Ranges': 'bytes',
-          'Content-Length': String(initialEnd + 1),
+          'Content-Length': String(fileSize),
           'Content-Type': mimeType,
         },
       })
@@ -229,12 +288,19 @@ function createWindow() {
     minHeight: 700,
     backgroundColor: '#09090b',
     title: 'DubDT - Estúdio de Dublagem & Fandub',
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.cjs'),
       nodeIntegration: false,
       contextIsolation: true,
       webSecurity: false, // Allows flexible local media streaming
+      backgroundThrottling: false,
+      additionalArguments: ['--disable-features=CalculateNativeWinOcclusion,SkiaGraphite,SkiaGraphiteUsePersistentCache'],
     },
+  })
+
+  mainWindow.once('ready-to-show', () => {
+    mainWindow.show()
   })
 
   const devUrl = 'http://localhost:5173'
@@ -245,8 +311,16 @@ function createWindow() {
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   ensureDirectories()
+  try {
+    if (session.defaultSession) {
+      await session.defaultSession.clearCache()
+      await session.defaultSession.clearStorageData({
+        storages: ['cachestorage', 'shadercache']
+      })
+    }
+  } catch (e) {}
   registerMediaProtocol()
   createWindow()
 
@@ -255,7 +329,12 @@ app.whenReady().then(() => {
   })
 })
 
+app.on('before-quit', () => {
+  clearCacheDirectories()
+})
+
 app.on('window-all-closed', () => {
+  clearCacheDirectories()
   if (process.platform !== 'darwin') app.quit()
 })
 
@@ -293,6 +372,23 @@ ipcMain.handle('dialog:selectVideoFile', async (_, options = {}) => {
     path: filePath,
     name: path.basename(filePath),
     mediaUrl: pathToMediaUrl(filePath),
+  }
+})
+
+// 1b. Resolve Dropped Video File (for drag and drop parity with dialog)
+ipcMain.handle('video:resolveFile', async (_, filePath) => {
+  if (!filePath || typeof filePath !== 'string') return null
+  try {
+    const resolved = path.resolve(filePath)
+    if (!fs.existsSync(resolved)) return null
+    return {
+      path: resolved,
+      name: path.basename(resolved),
+      mediaUrl: pathToMediaUrl(resolved),
+    }
+  } catch (err) {
+    console.error('Erro ao resolver arquivo de vídeo arrastado:', err)
+    return null
   }
 })
 
@@ -399,7 +495,7 @@ ipcMain.handle('dialog:selectProjectFileToSave', async (_, defaultName) => {
 function hasAudioStream(filePath) {
   return new Promise((resolve) => {
     if (!filePath || !fs.existsSync(filePath)) return resolve(false)
-    const proc = spawn('ffprobe', [
+    const proc = spawn(getFfprobePath(), [
       '-v', 'error',
       '-select_streams', 'a',
       '-show_entries', 'stream=codec_type',
@@ -824,7 +920,7 @@ const peaksCache = new Map()
 
 function getVideoDuration(filePath) {
   return new Promise((resolve) => {
-    const proc = spawn('ffprobe', [
+    const proc = spawn(getFfprobePath(), [
       '-v', 'error',
       '-show_entries', 'format=duration:stream=duration',
       '-of', 'default=noprint_wrappers=1:nokey=1',
@@ -879,7 +975,7 @@ ipcMain.handle('ffmpeg:getWaveformPeaks', async (_, videoPath) => {
       'pipe:1',
     ]
 
-    const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'ignore'] })
+    const proc = spawn(getFfmpegPath(), args, { stdio: ['ignore', 'pipe', 'ignore'] })
     const peaks = []
     let currentMax = 0
     let sampleCounter = 0
@@ -964,7 +1060,7 @@ ipcMain.handle('ffmpeg:extractAudioWaveform', async (_, videoPath) => {
       outputPath,
     ]
 
-    const proc = spawn('ffmpeg', args)
+    const proc = spawn(getFfmpegPath(), args)
     proc.on('close', (code) => {
       if (code === 0) {
         resolve({
@@ -1079,9 +1175,11 @@ ipcMain.handle('ffmpeg:exportMix', async (_, options) => {
         const take = line.takes[line.activeTakeIndex || 0] || line.takes[0]
         const resolvedPath = resolveTakeFilePath(take)
         if (resolvedPath && fs.existsSync(resolvedPath)) {
+          const rawStart = (line.startTime || 0) + (line.audioOffset || 0)
           activeTakes.push({
             filePath: resolvedPath,
-            startTime: Math.max(0, line.startTime || 0),
+            startTime: Math.max(0, rawStart),
+            trimStart: rawStart < 0 ? Math.abs(rawStart) : 0,
           })
         }
       }
@@ -1110,6 +1208,7 @@ ipcMain.handle('ffmpeg:exportMix', async (_, options) => {
       takeInputIndices.push({
         idx: inputCount,
         startTime: t.startTime,
+        trimStart: t.trimStart,
       })
       inputCount++
     })
@@ -1139,11 +1238,18 @@ ipcMain.handle('ffmpeg:exportMix', async (_, options) => {
       const delayMs = Math.round(t.startTime * 1000)
       const voiceFilter = getVoiceFilter(voicePreset, recordedVoicesVolume, enableNoiseSuppression, noiseSuppressionLevel)
       const outLabel = `voice_${i}`
-      if (delayMs > 0) {
-        filterParts.push(`[${t.idx}:a]${voiceFilter},aresample=48000,aformat=channel_layouts=stereo:sample_rates=48000,adelay=${delayMs}|${delayMs},asetpts=PTS-STARTPTS[${outLabel}]`)
-      } else {
-        filterParts.push(`[${t.idx}:a]${voiceFilter},aresample=48000,aformat=channel_layouts=stereo:sample_rates=48000,asetpts=PTS-STARTPTS[${outLabel}]`)
+      let filterChain = `[${t.idx}:a]${voiceFilter}`
+      if (t.trimStart && t.trimStart > 0) {
+        filterChain += `,atrim=start=${t.trimStart.toFixed(3)},asetpts=PTS-STARTPTS`
       }
+      filterChain += `,aresample=48000,aformat=channel_layouts=stereo:sample_rates=48000`
+      if (delayMs > 0) {
+        filterChain += `,adelay=${delayMs}|${delayMs},asetpts=PTS-STARTPTS`
+      } else {
+        filterChain += `,asetpts=PTS-STARTPTS`
+      }
+      filterChain += `[${outLabel}]`
+      filterParts.push(filterChain)
       mixedAudioInputs.push(`[${outLabel}]`)
     })
 
@@ -1176,7 +1282,7 @@ ipcMain.handle('ffmpeg:exportMix', async (_, options) => {
 
     console.log('Running FFmpeg Mix:', 'ffmpeg', args.join(' '))
 
-    const proc = spawn('ffmpeg', args)
+    const proc = spawn(getFfmpegPath(), args)
     let stderr = ''
     proc.stderr.on('data', (d) => { stderr += d.toString() })
     proc.on('close', (code) => {
@@ -1261,7 +1367,7 @@ ipcMain.handle('ffmpeg:exportClips', async (_, options) => {
         args.push('-c:a', 'pcm_s16le', clipOutputPath)
       }
 
-      const proc = spawn('ffmpeg', args)
+      const proc = spawn(getFfmpegPath(), args)
       proc.on('close', (code) => {
         if (code === 0) {
           results.push(clipOutputPath)

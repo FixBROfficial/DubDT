@@ -34,6 +34,7 @@ interface Step1AnnotationProps {
   missingVideoName?: string | null
   missingVideoPath?: string | null
   onRelinkVideo?: () => void
+  onLoadVideoDirectly?: (file: { path: string; name: string; mediaUrl: string }) => void
 }
 
 export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
@@ -51,7 +52,9 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   missingVideoName = null,
   missingVideoPath = null,
   onRelinkVideo,
+  onLoadVideoDirectly,
 }) => {
+  const [isDraggingVideo, setIsDraggingVideo] = useState<boolean>(false)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const waveformContainerRef = useRef<HTMLDivElement | null>(null)
   const timelineContainerRef = useRef<HTMLDivElement | null>(null)
@@ -345,8 +348,10 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     }
   }, [zoomLevel])
 
-  // Sync WaveSurfer regions when currentLayer changes or when lines are added/removed
-  const linesSignature = lines.map((l) => `${l.id}_${l.layer || 1}`).join(';')
+  // Sync WaveSurfer regions when currentLayer changes or when lines are added/removed/edited/undone
+  const linesSignature = lines
+    .map((l) => `${l.id}_${l.layer || 1}_${l.startTime.toFixed(3)}_${l.endTime.toFixed(3)}_${l.text}`)
+    .join(';')
   useEffect(() => {
     if (wsRef.current && wsRegionsRef.current) {
       syncRegions(currentLayer, lines)
@@ -663,15 +668,107 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     }
   }
 
+  // Drag and Drop handlers for video files
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!isDraggingVideo) setIsDraggingVideo(true)
+  }
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return
+    setIsDraggingVideo(false)
+  }
+
+  const handleVideoDrop = async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDraggingVideo(false)
+
+    const file = e.dataTransfer.files?.[0]
+    if (!file) return
+
+    const validExtensions = ['.mp4', '.mkv', '.webm', '.mov', '.avi', '.m4v', '.flv', '.wmv']
+    const hasValidExt = validExtensions.some((ext) => file.name.toLowerCase().endsWith(ext))
+    if (!hasValidExt && !file.type.startsWith('video/')) {
+      alert('Por favor, arraste um arquivo de vídeo válido (MP4, MKV, WebM, MOV, AVI, etc).')
+      return
+    }
+
+    let filePath = ''
+    if (window.electronAPI) {
+      if (typeof window.electronAPI.getPathForFile === 'function') {
+        try {
+          filePath = window.electronAPI.getPathForFile(file) || ''
+        } catch (err) {}
+      }
+      if (!filePath && (file as any).realPath) {
+        filePath = (file as any).realPath
+      }
+      if (!filePath && (file as any).path) {
+        filePath = (file as any).path
+      }
+    }
+
+    // Resolve via electron main process for 100% exact parity with dialog:selectVideoFile!
+    if (window.electronAPI && filePath) {
+      try {
+        if (typeof window.electronAPI.resolveDroppedVideoFile === 'function') {
+          const resolved = await window.electronAPI.resolveDroppedVideoFile(filePath)
+          if (resolved && resolved.mediaUrl) {
+            if (onLoadVideoDirectly) {
+              onLoadVideoDirectly(resolved)
+            }
+            return
+          }
+        }
+      } catch (err) {
+        console.warn('Erro ao resolver vídeo arrastado via IPC:', err)
+      }
+
+      const mediaUrl = window.electronAPI.convertToMediaUrl(filePath)
+      if (onLoadVideoDirectly) {
+        onLoadVideoDirectly({
+          path: filePath,
+          name: file.name,
+          mediaUrl,
+        })
+      }
+      return
+    }
+
+    // Browser fallback
+    const blobMediaUrl = URL.createObjectURL(file)
+    if (onLoadVideoDirectly) {
+      onLoadVideoDirectly({
+        path: file.name,
+        name: file.name,
+        mediaUrl: blobMediaUrl,
+      })
+    }
+  }
+
   return (
     <div className="flex-1 flex flex-col h-[calc(100vh-3rem)] overflow-hidden bg-[#050505]">
       {!videoMediaUrl ? (
         isVideoMissing || lines.length > 0 ? (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center max-w-lg mx-auto">
+          <div
+            onDragOver={handleDragOver}
+            onDragEnter={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleVideoDrop}
+            className={`flex-1 flex flex-col items-center justify-center p-8 text-center max-w-lg mx-auto transition-all ${
+              isDraggingVideo ? 'scale-[0.98] ring-2 ring-emerald-500/50 rounded-xl bg-emerald-950/10' : ''
+            }`}
+          >
             <div className="w-14 h-14 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center justify-center mb-4 text-amber-400 shadow-xl">
               <AlertTriangle className="w-7 h-7" />
             </div>
-            <h2 className="text-base font-semibold text-white mb-1">Vídeo do Projeto Não Encontrado</h2>
+            <h2 className="text-base font-semibold text-white mb-1">
+              {isDraggingVideo ? 'Solte o vídeo aqui para reconectar!' : 'Vídeo do Projeto Não Encontrado'}
+            </h2>
             <p className="text-xs text-zinc-400 max-w-md mb-4 leading-relaxed">
               O projeto possui marcações e falas salvas, mas o arquivo de vídeo original não está acessível no caminho registrado. Você pode marcar onde o arquivo está no Explorer e abrir para continuar seu trabalho.
             </p>
@@ -713,19 +810,55 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
             </div>
           </div>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-            <div className="w-12 h-12 border border-zinc-800 rounded-md flex items-center justify-center mb-4 text-zinc-400">
-              <Upload className="w-5 h-5" />
+          <div
+            onDragOver={handleDragOver}
+            onDragEnter={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleVideoDrop}
+            className={`flex-1 flex flex-col items-center justify-center p-8 text-center transition-all duration-200 m-6 rounded-2xl border-2 border-dashed select-none cursor-pointer ${
+              isDraggingVideo
+                ? 'border-emerald-400 bg-emerald-950/30 scale-[0.99] shadow-[0_0_40px_rgba(16,185,129,0.2)] ring-4 ring-emerald-500/20'
+                : 'border-zinc-800 hover:border-zinc-600 bg-zinc-950/40 hover:bg-zinc-900/30'
+            }`}
+            onClick={(e) => {
+              if ((e.target as HTMLElement).tagName !== 'BUTTON' && !(e.target as HTMLElement).closest('button')) {
+                onSelectVideo()
+              }
+            }}
+          >
+            <div
+              className={`w-16 h-16 rounded-2xl flex items-center justify-center mb-4 transition-all duration-200 ${
+                isDraggingVideo
+                  ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 scale-110 shadow-[0_0_20px_rgba(16,185,129,0.3)]'
+                  : 'border border-zinc-800 bg-zinc-900/70 text-zinc-400 shadow-lg'
+              }`}
+            >
+              <Upload
+                className={`w-7 h-7 transition-all ${
+                  isDraggingVideo ? 'animate-bounce text-emerald-400' : 'text-zinc-300'
+                }`}
+              />
             </div>
-            <h2 className="text-sm font-semibold text-white mb-1">Selecione o vídeo para dublagem</h2>
-            <p className="text-xs text-zinc-500 max-w-sm mb-5">
-              Formatos suportados: MP4, MKV, WebM, MOV, AVI.
+            <h2 className="text-base font-semibold text-white mb-1.5 tracking-wide">
+              {isDraggingVideo ? 'Solte o arquivo de vídeo aqui!' : 'Arraste o vídeo aqui ou selecione no Explorer'}
+            </h2>
+            <p className="text-xs text-zinc-400 max-w-md mb-6 leading-relaxed">
+              Arraste e solte o arquivo de vídeo diretamente nesta área para carregar.
+              <br />
+              <span className="text-zinc-500 text-[11px] mt-1 inline-block">
+                Formatos suportados: MP4, MKV, WebM, MOV, AVI, M4V, FLV
+              </span>
             </p>
             <button
-              onClick={onSelectVideo}
-              className="px-4 py-2 bg-white text-black hover:bg-zinc-200 text-xs font-medium rounded transition-colors"
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation()
+                onSelectVideo()
+              }}
+              className="px-5 py-2.5 bg-white hover:bg-zinc-200 text-black text-xs font-semibold rounded-lg shadow-lg hover:shadow-xl transition-all cursor-pointer flex items-center gap-2"
             >
-              Selecionar Vídeo
+              <FolderOpen className="w-4 h-4" />
+              <span>Selecionar Vídeo no Explorer</span>
             </button>
           </div>
         )

@@ -5,11 +5,42 @@
   "main": "electron/main.cjs",
   "scripts": {
     "dev:vite": "vite",
-    "dev:electron": "electron . --dev",
+    "dev:electron": "electron --disable-http-cache --disk-cache-size=0 --media-cache-size=0 --disable-gpu-shader-disk-cache --disable-features=CalculateNativeWinOcclusion,SkiaGraphite,SkiaGraphiteUsePersistentCache . --dev",
     "dev": "concurrently -k \"npm run dev:vite\" \"wait-on tcp:5173 && npm run dev:electron\"",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "start": "electron ."
+    "start": "electron --disable-http-cache --disk-cache-size=0 --media-cache-size=0 --disable-gpu-shader-disk-cache --disable-features=CalculateNativeWinOcclusion,SkiaGraphite,SkiaGraphiteUsePersistentCache .",
+    "dist:portable": "npm run build && electron-builder --win portable",
+    "dist:dir": "npm run build && electron-builder --win --dir"
+  },
+  "build": {
+    "appId": "com.dubdt.studio",
+    "productName": "DubDT",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "bin",
+        "to": "bin",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        "portable"
+      ]
+    },
+    "portable": {
+      "artifactName": "DubDT-Portable.exe"
+    }
   },
   "keywords": [],
   "author": "",

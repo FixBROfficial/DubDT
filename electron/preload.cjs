@@ -1,7 +1,38 @@
-const { contextBridge, ipcRenderer } = require('electron')
+const { contextBridge, ipcRenderer, webUtils } = require('electron')
 const { pathToFileURL } = require('url')
 
+// Capture drop events directly in preload to extract native file paths without marshaling issues
+window.addEventListener('drop', (e) => {
+  if (e.dataTransfer && e.dataTransfer.files) {
+    for (let i = 0; i < e.dataTransfer.files.length; i++) {
+      const file = e.dataTransfer.files[i]
+      if (webUtils && typeof webUtils.getPathForFile === 'function') {
+        try {
+          const p = webUtils.getPathForFile(file)
+          if (p) {
+            Object.defineProperty(file, 'realPath', { value: p, configurable: true, writable: true })
+          }
+        } catch (err) {}
+      }
+    }
+  }
+}, true)
+
 contextBridge.exposeInMainWorld('electronAPI', {
+  // File utilities (Drag and drop)
+  getPathForFile: (file) => {
+    if (!file) return ''
+    if (file.realPath) return file.realPath
+    if (webUtils && typeof webUtils.getPathForFile === 'function') {
+      try {
+        const p = webUtils.getPathForFile(file)
+        if (p) return p
+      } catch (e) {}
+    }
+    return file?.path || ''
+  },
+  resolveDroppedVideoFile: (filePath) => ipcRenderer.invoke('video:resolveFile', filePath),
+
   // Dialogs
   selectVideoFile: (options) => ipcRenderer.invoke('dialog:selectVideoFile', options),
   selectAudioFile: () => ipcRenderer.invoke('dialog:selectAudioFile'),

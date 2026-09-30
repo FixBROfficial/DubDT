@@ -202,12 +202,27 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
   const startRecordingProcess = useCallback(async () => {
     if (isRecording || isCountingDown || !currentLine) return
 
-    const preRoll = audioSettings.preRollSeconds || 0
-    const startPoint = Math.max(0, currentLine.startTime - preRoll)
+    // Pre-seek the video to currentLine.startTime immediately so seek is 100% finished during countdown!
     if (videoRef.current) {
       videoRef.current.pause()
-      videoRef.current.currentTime = startPoint
+      videoRef.current.currentTime = currentLine.startTime
       videoRef.current.volume = audioSettings.originalAudioVolumeDuringRecording
+    }
+
+    // Pre-initialize microphone stream during countdown so getUserMedia doesn't cause any lag when recording starts
+    let preStream: MediaStream | null = null
+    try {
+      const constraints: MediaStreamConstraints = {
+        audio: {
+          ...(audioSettings.inputDeviceId ? { deviceId: { exact: audioSettings.inputDeviceId } } : {}),
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      }
+      preStream = await navigator.mediaDevices.getUserMedia(constraints)
+    } catch (e) {
+      console.warn('Microphone pre-check error:', e)
     }
 
     setIsCountingDown(true)
@@ -224,26 +239,29 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
         clearInterval(timer)
         setIsCountingDown(false)
         if (audioSettings.countdownBeeps) playCountdownStep(0)
-        await executeRecording()
+        await executeRecording(preStream)
       }
     }, 1000)
   }, [isRecording, isCountingDown, currentLine, audioSettings])
 
-  const executeRecording = async () => {
+  const executeRecording = async (preStream?: MediaStream | null) => {
     if (!currentLine) return
 
     try {
-      const constraints: MediaStreamConstraints = {
-        audio: {
-          ...(audioSettings.inputDeviceId
-            ? { deviceId: { exact: audioSettings.inputDeviceId } }
-            : {}),
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
+      let stream = preStream
+      if (!stream || !stream.active) {
+        const constraints: MediaStreamConstraints = {
+          audio: {
+            ...(audioSettings.inputDeviceId
+              ? { deviceId: { exact: audioSettings.inputDeviceId } }
+              : {}),
+            echoCancellation: false,
+            noiseSuppression: false,
+            autoGainControl: false,
+          },
+        }
+        stream = await navigator.mediaDevices.getUserMedia(constraints)
       }
-      const stream = await navigator.mediaDevices.getUserMedia(constraints)
       micStreamRef.current = stream
 
       const AudioCtx =
@@ -280,6 +298,19 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
         const blobUrl = URL.createObjectURL(audioBlob)
         const arrayBuffer = await audioBlob.arrayBuffer()
 
+        // Decode audio arrayBuffer to get TRUE, exact duration of the recorded audio!
+        let accurateDuration = currentLine.endTime - currentLine.startTime
+        try {
+          const tempCtx = new (window.AudioContext || (window as any).webkitAudioContext)()
+          const decoded = await tempCtx.decodeAudioData(arrayBuffer.slice(0))
+          if (decoded && decoded.duration > 0) {
+            accurateDuration = decoded.duration
+          }
+          await tempCtx.close()
+        } catch (e) {
+          console.warn('Could not decode audio duration:', e)
+        }
+
         const currentTakesCount = currentLine.takes?.length || 0
         const takeNum = currentTakesCount + 1
 
@@ -299,7 +330,7 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
           id: `take_${Date.now()}`,
           takeNumber: takeNum,
           filePath: savedFilePath,
-          duration: currentLine.endTime - currentLine.startTime,
+          duration: accurateDuration,
           createdAt: Date.now(),
           audioBlobUrl: savedMediaUrl || blobUrl,
         }
@@ -320,24 +351,21 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
         ctx.close().catch(() => {})
       }
 
-      mediaRecorder.start(100)
-      setIsRecording(true)
-
-      if (videoRef.current) {
-        videoRef.current.pause()
+      // CRITICAL SYNCHRONIZATION:
+      // Start video playback FIRST, and start mediaRecorder at the EXACT same moment video rolls!
+      if (videoRef.current && videoMediaUrl) {
         videoRef.current.currentTime = currentLine.startTime
         videoRef.current.volume = audioSettings.originalAudioVolumeDuringRecording
-
-        let started = false
-        const startVideo = () => {
-          if (started) return
-          started = true
-          videoRef.current?.play().catch(console.error)
+        try {
+          await videoRef.current.play()
+        } catch (playErr) {
+          console.warn('Video play error during recording start:', playErr)
         }
-
-        videoRef.current.addEventListener('seeked', startVideo, { once: true })
-        setTimeout(startVideo, 300)
       }
+
+      // Start recording immediately in sync with playback
+      mediaRecorder.start(50)
+      setIsRecording(true)
 
       const recordingDurationMs = Math.max(1000, ((currentLine.endTime - currentLine.startTime) + 2.5) * 1000)
       if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current)

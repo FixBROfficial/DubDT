@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { AppStep, DialogueLine, AudioSettings, ExportSettings, RecentProject, DubDTProject } from './types'
+import { useUndoRedo, areLinesEqual } from './utils/useUndoRedo'
 import { Navbar } from './components/Navbar'
 import { Step1Annotation } from './components/Step1Annotation'
 import { Step2Recording } from './components/Step2Recording'
@@ -50,8 +51,31 @@ export const App: React.FC = () => {
   const [missingVideoPath, setMissingVideoPath] = useState<string | null>(null)
   const [isRelinkModalOpen, setIsRelinkModalOpen] = useState<boolean>(false)
 
-  // Dialogue lines
-  const [lines, setLines] = useState<DialogueLine[]>([])
+  // Dialogue lines with Undo & Redo History
+  const {
+    state: lines,
+    setState: setLines,
+    reset: resetLines,
+    undo,
+    redo,
+    canUndo,
+    canRedo,
+  } = useUndoRedo<DialogueLine[]>([], {
+    maxHistory: 100,
+    isEqual: areLinesEqual,
+  })
+
+  const handleUndo = useCallback(() => {
+    if (undo()) {
+      showNotification('Ação desfeita (Ctrl+Z)', 'info')
+    }
+  }, [undo])
+
+  const handleRedo = useCallback(() => {
+    if (redo()) {
+      showNotification('Ação refeita (Ctrl+Y)', 'info')
+    }
+  }, [redo])
 
   // Audio Settings
   const [audioSettings, setAudioSettings] = useState<AudioSettings>({
@@ -141,7 +165,7 @@ export const App: React.FC = () => {
     setMissingVideoName(null)
     setMissingVideoPath(null)
     setIsRelinkModalOpen(false)
-    setLines([])
+    resetLines([])
     setExportSettings(initialExportSettings)
     setCurrentProjectPath(null)
     setCurrentProjectName(null)
@@ -298,7 +322,7 @@ export const App: React.FC = () => {
         }
 
         // Restore lines
-        setLines(project.lines || [])
+        resetLines(project.lines || [])
 
         // Restore settings
         if (project.audioSettings) setAudioSettings(project.audioSettings)
@@ -345,7 +369,7 @@ export const App: React.FC = () => {
       try {
         const project: DubDTProject = JSON.parse(ev.target?.result as string)
         const name = file.name.replace(/\.dubdt$/i, '')
-        setLines(project.lines || [])
+        resetLines(project.lines || [])
         if (project.audioSettings) setAudioSettings(project.audioSettings)
         const loadedBgAudio =
           project.customBgAudioPath || project.exportSettings?.customBgAudioPath || null
@@ -379,7 +403,7 @@ export const App: React.FC = () => {
     setMissingVideoName(null)
     setMissingVideoPath(null)
     setIsRelinkModalOpen(false)
-    setLines([])
+    resetLines([])
     setExportSettings(initialExportSettings)
     setCurrentProjectPath(null)
     setCurrentProjectName(null)
@@ -401,24 +425,32 @@ export const App: React.FC = () => {
     showNotification('Histórico de projetos recentes limpo.', 'info')
   }
 
-  // Global Keyboard Shortcuts for Project Operations
+  // Global Keyboard Shortcuts for Project Operations & Undo/Redo
   useEffect(() => {
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return
 
-      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+      const isCtrlOrCmd = e.ctrlKey || e.metaKey
+
+      if (isCtrlOrCmd && (e.key === 's' || e.key === 'S')) {
         e.preventDefault()
         if (e.shiftKey) {
           handleSaveProjectAs()
         } else {
           handleSaveProject()
         }
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'o' || e.key === 'O')) {
+      } else if (isCtrlOrCmd && (e.key === 'o' || e.key === 'O')) {
         e.preventDefault()
         handleOpenProject()
-      } else if ((e.ctrlKey || e.metaKey) && (e.key === 'n' || e.key === 'N')) {
+      } else if (isCtrlOrCmd && (e.key === 'n' || e.key === 'N')) {
         e.preventDefault()
         handleNewProject()
+      } else if (isCtrlOrCmd && (e.key === 'y' || e.key === 'Y' || (e.shiftKey && (e.key === 'z' || e.key === 'Z')))) {
+        e.preventDefault()
+        handleRedo()
+      } else if (isCtrlOrCmd && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault()
+        handleUndo()
       }
     }
 
@@ -432,6 +464,8 @@ export const App: React.FC = () => {
     lines,
     audioSettings,
     exportSettings,
+    handleUndo,
+    handleRedo,
   ])
 
   // Relink missing project video (preserves lines, takes and settings)
@@ -459,7 +493,7 @@ export const App: React.FC = () => {
           setMissingVideoName(null)
           setMissingVideoPath(null)
           setIsRelinkModalOpen(false)
-          setLines([]) // reset lines for new video
+          resetLines([]) // reset lines and history for new video
           setExportSettings((prev) => ({ ...prev, customBgAudioPath: null })) // reset M&E for new video
           showNotification(`Vídeo carregado: ${file.name}`, 'info')
         }
@@ -471,6 +505,32 @@ export const App: React.FC = () => {
     }
   }
 
+  // Load video directly (e.g. from drag and drop)
+  const handleLoadVideoDirectly = (file: { path: string; name: string; mediaUrl: string }) => {
+    setVideoPath(file.path)
+    setVideoMediaUrl(file.mediaUrl)
+    setVideoName(file.name)
+    setIsVideoMissing(false)
+    setMissingVideoName(null)
+    setMissingVideoPath(null)
+    setIsRelinkModalOpen(false)
+    resetLines([])
+    setExportSettings((prev) => ({ ...prev, customBgAudioPath: null }))
+    showNotification(`Vídeo carregado: ${file.name}`, 'info')
+  }
+
+  // Prevent default Electron/Chromium drag-and-drop navigation
+  useEffect(() => {
+    const handleWindowDragOver = (e: DragEvent) => e.preventDefault()
+    const handleWindowDrop = (e: DragEvent) => e.preventDefault()
+    window.addEventListener('dragover', handleWindowDragOver)
+    window.addEventListener('drop', handleWindowDrop)
+    return () => {
+      window.removeEventListener('dragover', handleWindowDragOver)
+      window.removeEventListener('drop', handleWindowDrop)
+    }
+  }, [])
+
   // Browser fallback for file selection
   const handleBrowserFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -479,7 +539,7 @@ export const App: React.FC = () => {
       setVideoPath(file.name)
       setVideoMediaUrl(url)
       setVideoName(file.name)
-      setLines([])
+      resetLines([])
       setExportSettings((prev) => ({ ...prev, customBgAudioPath: null }))
       showNotification(`Vídeo carregado: ${file.name}`, 'info')
     }
@@ -534,6 +594,10 @@ export const App: React.FC = () => {
         isVideoMissing={isVideoMissing}
         missingVideoName={missingVideoName}
         onOpenRelinkModal={() => setIsRelinkModalOpen(true)}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        canUndo={canUndo}
+        canRedo={canRedo}
       />
 
       {/* Floating Notification Toast */}
@@ -581,6 +645,7 @@ export const App: React.FC = () => {
               missingVideoName={missingVideoName}
               missingVideoPath={missingVideoPath}
               onRelinkVideo={() => setIsRelinkModalOpen(true)}
+              onLoadVideoDirectly={handleLoadVideoDirectly}
             />
           </div>
 
@@ -608,7 +673,9 @@ export const App: React.FC = () => {
             <Step3Export
               videoPath={videoPath}
               videoMediaUrl={videoMediaUrl}
+              videoName={videoName}
               lines={lines}
+              setLines={setLines}
               exportSettings={exportSettings}
               setExportSettings={setExportSettings}
               isActive={currentStep === 'export'}

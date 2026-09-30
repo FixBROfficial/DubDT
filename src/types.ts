@@ -15,6 +15,7 @@ export interface DialogueLine {
   takes: DialogueTake[]
   activeTakeIndex: number
   layer?: number // 1, 2, 3...
+  audioOffset?: number // Timing offset in seconds (+ or -) without affecting original timestamps
 }
 
 export interface AudioSettings {

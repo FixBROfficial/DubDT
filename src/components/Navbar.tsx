@@ -13,6 +13,8 @@ import {
   ChevronRight,
   X,
   AlertTriangle,
+  Undo2,
+  Redo2,
 } from 'lucide-react'
 
 interface NavbarProps {
@@ -37,6 +39,10 @@ interface NavbarProps {
   isVideoMissing?: boolean
   missingVideoName?: string | null
   onOpenRelinkModal?: () => void
+  onUndo?: () => void
+  onRedo?: () => void
+  canUndo?: boolean
+  canRedo?: boolean
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -61,6 +67,10 @@ export const Navbar: React.FC<NavbarProps> = ({
   isVideoMissing = false,
   missingVideoName = null,
   onOpenRelinkModal,
+  onUndo,
+  onRedo,
+  canUndo = false,
+  canRedo = false,
 }) => {
   const [isProjectMenuOpen, setIsProjectMenuOpen] = useState(false)
   const [showRecentsMenu, setShowRecentsMenu] = useState(false)
@@ -236,6 +246,48 @@ export const Navbar: React.FC<NavbarProps> = ({
 
               <div className="h-px bg-zinc-900 my-1" />
 
+              {/* Desfazer */}
+              <button
+                onClick={() => {
+                  setIsProjectMenuOpen(false)
+                  onUndo?.()
+                }}
+                disabled={!canUndo}
+                className={`w-full flex items-center justify-between px-3 py-1.5 transition-colors ${
+                  canUndo
+                    ? 'text-zinc-300 hover:bg-zinc-800 hover:text-white cursor-pointer'
+                    : 'text-zinc-600 cursor-not-allowed'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Undo2 className="w-3.5 h-3.5" />
+                  <span>Desfazer</span>
+                </div>
+                <span className="text-[10px] font-mono text-zinc-500">Ctrl+Z</span>
+              </button>
+
+              {/* Refazer */}
+              <button
+                onClick={() => {
+                  setIsProjectMenuOpen(false)
+                  onRedo?.()
+                }}
+                disabled={!canRedo}
+                className={`w-full flex items-center justify-between px-3 py-1.5 transition-colors ${
+                  canRedo
+                    ? 'text-zinc-300 hover:bg-zinc-800 hover:text-white cursor-pointer'
+                    : 'text-zinc-600 cursor-not-allowed'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Redo2 className="w-3.5 h-3.5" />
+                  <span>Refazer</span>
+                </div>
+                <span className="text-[10px] font-mono text-zinc-500">Ctrl+Y</span>
+              </button>
+
+              <div className="h-px bg-zinc-900 my-1" />
+
               {/* Fechar Projeto */}
               <button
                 onClick={() => {
@@ -353,6 +405,34 @@ export const Navbar: React.FC<NavbarProps> = ({
 
       {/* Minimal Actions */}
       <div className="flex items-center gap-2">
+        {/* Undo / Redo Quick Buttons */}
+        <div className="flex items-center gap-0.5 bg-zinc-950 p-0.5 rounded border border-zinc-900">
+          <button
+            onClick={onUndo}
+            disabled={!canUndo}
+            title="Desfazer (Ctrl+Z)"
+            className={`p-1.5 rounded transition-colors ${
+              canUndo
+                ? 'text-zinc-300 hover:text-white hover:bg-zinc-800 cursor-pointer'
+                : 'text-zinc-700 cursor-not-allowed'
+            }`}
+          >
+            <Undo2 className="w-3.5 h-3.5" />
+          </button>
+          <button
+            onClick={onRedo}
+            disabled={!canRedo}
+            title="Refazer (Ctrl+Y / Ctrl+Shift+Z)"
+            className={`p-1.5 rounded transition-colors ${
+              canRedo
+                ? 'text-zinc-300 hover:text-white hover:bg-zinc-800 cursor-pointer'
+                : 'text-zinc-700 cursor-not-allowed'
+            }`}
+          >
+            <Redo2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
         <button
           onClick={onOpenSettings}
           title="Configurações de Áudio"

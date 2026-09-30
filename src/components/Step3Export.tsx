@@ -19,12 +19,16 @@ import {
   Trash2,
   AlertTriangle,
   FolderOpen,
+  SlidersHorizontal,
 } from 'lucide-react'
+import { TimingEditorModal } from './TimingEditorModal'
 
 interface Step3ExportProps {
   videoPath: string | null
   videoMediaUrl: string | null
+  videoName?: string | null
   lines: DialogueLine[]
+  setLines: React.Dispatch<React.SetStateAction<DialogueLine[]>>
   exportSettings: ExportSettings
   setExportSettings: React.Dispatch<React.SetStateAction<ExportSettings>>
   isActive?: boolean
@@ -36,7 +40,9 @@ interface Step3ExportProps {
 export const Step3Export: React.FC<Step3ExportProps> = ({
   videoPath,
   videoMediaUrl,
+  videoName = null,
   lines,
+  setLines,
   exportSettings,
   setExportSettings,
   isActive = true,
@@ -44,6 +50,7 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
   missingVideoName = null,
   onRelinkVideo,
 }) => {
+  const [isTimingEditorOpen, setIsTimingEditorOpen] = useState<boolean>(false)
   const [isExporting, setIsExporting] = useState<boolean>(false)
   const [exportProgressText, setExportProgressText] = useState<string>('')
   const [exportSuccessMessage, setExportSuccessMessage] = useState<string | null>(null)
@@ -97,15 +104,15 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
     activePlayersRef.current.clear()
   }, [])
 
-  // Stop everything when tab becomes inactive
+  // Stop everything when tab becomes inactive or Timing Editor is opened
   useEffect(() => {
-    if (isActive === false) {
+    if (!isActive || isTimingEditorOpen) {
       if (videoRef.current && !videoRef.current.paused) videoRef.current.pause()
       if (bgAudioRef.current && !bgAudioRef.current.paused) bgAudioRef.current.pause()
       stopAllTakeAudios()
       setIsPlaying(false)
     }
-  }, [isActive, stopAllTakeAudios])
+  }, [isActive, isTimingEditorOpen, stopAllTakeAudios])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -136,7 +143,7 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
   ])
 
   const togglePlay = useCallback(() => {
-    if (!videoRef.current) return
+    if (!videoRef.current || isTimingEditorOpen) return
 
     if (isPlaying || !videoRef.current.paused) {
       videoRef.current.pause()
@@ -163,11 +170,11 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
         })
         .catch(console.error)
     }
-  }, [isPlaying, customBgMediaUrl, duration])
+  }, [isPlaying, customBgMediaUrl, duration, isTimingEditorOpen])
 
-  // Keyboard shortcut: Space toggles mix preview when active
+  // Keyboard shortcut: Space toggles mix preview when active and timing editor closed
   useEffect(() => {
-    if (!isActive) return
+    if (!isActive || isTimingEditorOpen) return
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return
@@ -179,11 +186,11 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isActive, togglePlay])
+  }, [isActive, isTimingEditorOpen, togglePlay])
 
   // Video timeupdate syncs all tracks (Original, M&E, Multi-layer Voice Takes in parallel)
   const handleTimeUpdate = () => {
-    if (!videoRef.current) return
+    if (!videoRef.current || isTimingEditorOpen) return
     const vTime = videoRef.current.currentTime
     setCurrentTime(vTime)
 
@@ -215,7 +222,20 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
       if (selectedLayerExport !== 'all' && selectedLayerExport !== 'separate') {
         if ((l.layer || 1) !== selectedLayerExport) return false
       }
-      return vTime >= l.startTime && vTime <= l.endTime && l.takes && l.takes.length > 0
+      const rawStart = (l.startTime || 0) + (l.audioOffset || 0)
+      const effectiveStart = Math.max(0, rawStart)
+      const activeTake = l.takes ? (l.takes[l.activeTakeIndex || 0] || l.takes[0]) : null
+      if (!activeTake) return false
+
+      const existingPlayer = activePlayersRef.current.get(l.id)
+      const playerDur = existingPlayer && !isNaN(existingPlayer.duration) && existingPlayer.duration > 0
+        ? existingPlayer.duration
+        : 0
+      const takeDur = Math.max(playerDur, activeTake.duration || 0, l.endTime - l.startTime)
+      // Generous buffer (+1.5s) so speech tails or negative offsets are NEVER cut off prematurely!
+      const effectiveEnd = rawStart + takeDur + 1.5
+
+      return vTime >= effectiveStart && vTime <= effectiveEnd && l.takes.length > 0
     })
 
     const activeLineIds = new Set(activeLines.map((l) => l.id))
@@ -243,27 +263,33 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
         (window.electronAPI ? window.electronAPI.convertToMediaUrl(activeTake.filePath) : '')
       if (!takeSrc) return
 
-      const takeOffset = Math.max(0, vTime - line.startTime)
+      const rawStart = (line.startTime || 0) + (line.audioOffset || 0)
+      const takeOffset = Math.max(0, vTime - rawStart)
       let player = activePlayersRef.current.get(line.id)
 
       if (!player) {
         player = new Audio(takeSrc)
         player.volume = targetVoiceVol
         player.currentTime = takeOffset
+        player.onended = () => {
+          activePlayersRef.current.delete(line.id)
+        }
         activePlayersRef.current.set(line.id, player)
         if (!videoRef.current?.paused) {
           player.play().catch(() => {})
         }
       } else {
         player.volume = targetVoiceVol
+        const maxDur = (!isNaN(player.duration) && player.duration > 0) ? player.duration : 999
         if (!videoRef.current?.paused) {
-          if (player.paused && takeOffset < (activeTake.duration || 10)) {
+          if (player.paused && takeOffset < maxDur) {
+            player.currentTime = takeOffset
             player.play().catch(() => {})
           }
         } else {
           if (!player.paused) player.pause()
         }
-        if (Math.abs(player.currentTime - takeOffset) > 0.15) {
+        if (Math.abs(player.currentTime - takeOffset) > 0.15 && takeOffset < maxDur) {
           player.currentTime = takeOffset
         }
       }
@@ -735,14 +761,16 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
                   {/* Dialogue Line Marker Segments */}
                   {duration > 0 &&
                     lines.map((l) => {
-                      const leftPct = Math.max(0, Math.min(100, (l.startTime / duration) * 100))
+                      const effOffset = l.audioOffset || 0
+                      const effectiveStart = Math.max(0, l.startTime + effOffset)
+                      const leftPct = Math.max(0, Math.min(100, (effectiveStart / duration) * 100))
                       const widthPct = Math.max(0.5, Math.min(100 - leftPct, ((l.endTime - l.startTime) / duration) * 100))
                       const hasTake = l.takes && l.takes.length > 0
                       return (
                         <div
                           key={l.id}
                           style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
-                          title={`#${lines.indexOf(l) + 1}: "${l.text}" (${hasTake ? 'Gravado' : 'Sem take'})`}
+                          title={`#${lines.indexOf(l) + 1}: "${l.text}" (${hasTake ? 'Gravado' : 'Sem take'})${effOffset !== 0 ? ` [Offset: ${(effOffset * 1000).toFixed(0)}ms]` : ''}`}
                           className={`absolute inset-y-0 ${
                             hasTake ? 'bg-emerald-500/70 hover:bg-emerald-400' : 'bg-zinc-600/50 hover:bg-zinc-500'
                           }`}
@@ -796,8 +824,22 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
                   </span>
                 </div>
 
-                <div className="flex items-center gap-2 text-[11px] text-zinc-500">
-                  <span className="hidden sm:inline">Pressione Espaço para tocar/pausar</span>
+                <div className="flex items-center gap-2.5 text-[11px] text-zinc-500">
+                  <button
+                    onClick={() => {
+                      if (videoRef.current && !videoRef.current.paused) videoRef.current.pause()
+                      stopAllTakeAudios()
+                      setIsPlaying(false)
+                      setIsTimingEditorOpen(true)
+                    }}
+                    className="flex items-center gap-1.5 px-2.5 py-1 bg-zinc-900 hover:bg-zinc-800 border border-zinc-750 hover:border-zinc-500 text-white text-xs font-medium rounded transition-all cursor-pointer shadow-sm group"
+                    title="Abrir Timing Editor com player e camadas de áudio"
+                  >
+                    <SlidersHorizontal className="w-3.5 h-3.5 text-emerald-400 group-hover:scale-110 transition-transform" />
+                    <span>Timing editor</span>
+                  </button>
+
+                  <span className="hidden sm:inline">Espaço para tocar</span>
                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                   <span className="text-zinc-400 font-mono">Mix Ativa</span>
                 </div>
@@ -826,6 +868,40 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
             )}
           </div>
         )}
+
+        {/* Dedicated Timing Editor Action Banner directly under Player */}
+        <div className="flex items-center justify-between p-3.5 bg-gradient-to-r from-zinc-950 via-[#0f0f12] to-zinc-950 border border-zinc-800 rounded-lg shadow-sm">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/25 flex items-center justify-center text-emerald-400 shrink-0">
+              <SlidersHorizontal className="w-4 h-4" />
+            </div>
+            <div>
+              <div className="text-xs font-semibold text-white flex items-center gap-2">
+                Timing Editor
+                {lines.some((l) => (l.audioOffset || 0) !== 0) && (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/60 font-mono">
+                    Sincronias Salvas
+                  </span>
+                )}
+              </div>
+              <div className="text-[11px] text-zinc-400">
+                Ajuste e alinhe as gravações de áudio arrastando os blocos na timeline sem alterar os timestamps originais.
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => {
+              if (videoRef.current && !videoRef.current.paused) videoRef.current.pause()
+              stopAllTakeAudios()
+              setIsPlaying(false)
+              setIsTimingEditorOpen(true)
+            }}
+            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded-md shadow-sm transition-all flex items-center gap-2 cursor-pointer shrink-0"
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            <span>Timing editor</span>
+          </button>
+        </div>
 
         {/* Channel Strips (Mixer) */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -1258,6 +1334,17 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
           )}
         </div>
       </div>
+
+      {/* Timing Editor Multi-layer Modal */}
+      <TimingEditorModal
+        isOpen={isTimingEditorOpen}
+        onClose={() => setIsTimingEditorOpen(false)}
+        videoMediaUrl={videoMediaUrl}
+        videoName={videoName}
+        lines={lines}
+        setLines={setLines}
+        customBgMediaUrl={customBgMediaUrl}
+      />
     </div>
   )
 }
