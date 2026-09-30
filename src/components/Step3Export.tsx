@@ -16,6 +16,7 @@ import {
   VolumeX,
   Disc,
   Layers,
+  Trash2,
 } from 'lucide-react'
 
 interface Step3ExportProps {
@@ -971,23 +972,39 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
               <span className="text-[10px] font-mono text-zinc-500">Música e Efeitos</span>
             </div>
 
-            <div>
+            <div className="flex items-center gap-1.5">
               <button
                 onClick={handleSelectCustomAudio}
-                className="w-full py-2 px-3 border border-dashed border-zinc-800 hover:border-zinc-700 rounded text-left transition-colors flex items-center justify-between"
+                className="flex-1 py-2 px-3 border border-dashed border-zinc-800 hover:border-zinc-700 rounded text-left transition-colors flex items-center justify-between"
               >
                 <div className="truncate pr-2">
                   <div className="text-[11px] text-white font-medium truncate">
                     {exportSettings.customBgAudioPath
-                      ? exportSettings.customBgAudioPath.split('\\').pop()
+                      ? exportSettings.customBgAudioPath.split(/[\\/]/).pop()
                       : 'Importar M&E'}
                   </div>
                   <div className="text-[9px] text-zinc-500">
-                    {exportSettings.customBgAudioPath ? 'Trilha carregada' : 'Substitui o áudio original'}
+                    {exportSettings.customBgAudioPath ? 'Trilha M&E carregada' : 'Substitui o áudio original'}
                   </div>
                 </div>
                 <Music className="w-3.5 h-3.5 text-zinc-500 shrink-0" />
               </button>
+
+              {exportSettings.customBgAudioPath && (
+                <button
+                  onClick={() => {
+                    if (bgAudioRef.current) {
+                      bgAudioRef.current.pause()
+                      bgAudioRef.current.currentTime = 0
+                    }
+                    setExportSettings((prev) => ({ ...prev, customBgAudioPath: null }))
+                  }}
+                  className="p-2 border border-zinc-800 hover:border-red-900/80 hover:bg-red-950/40 text-zinc-400 hover:text-red-400 rounded transition-colors cursor-pointer"
+                  title="Remover trilha M&E deste projeto"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              )}
             </div>
 
             {exportSettings.customBgAudioPath && (

@@ -412,6 +412,7 @@ ipcMain.handle('project:save', async (_, { filePath, data }) => {
           })
         : []
 
+      const sourceBg = data.customBgAudioPath || data.exportSettings?.customBgAudioPath || null
       const manifest = {
         ...data,
         lines: manifestLines,
@@ -420,7 +421,10 @@ ipcMain.handle('project:save', async (_, { filePath, data }) => {
         updatedAt: Date.now(),
         videoPath: data.videoPath || null,
         videoName: data.videoName || (data.videoPath ? path.basename(data.videoPath) : null),
-        customBgAudioPath: data.customBgAudioPath || null,
+        customBgAudioPath: sourceBg,
+      }
+      if (manifest.exportSettings) {
+        manifest.exportSettings.customBgAudioPath = sourceBg
       }
 
       const targetFolder = path.dirname(filePath)
@@ -465,19 +469,31 @@ ipcMain.handle('project:save', async (_, { filePath, data }) => {
     }
 
     // 2. Bundle custom background audio if present
-    if (data.customBgAudioPath && fs.existsSync(data.customBgAudioPath)) {
-      const ext = path.extname(data.customBgAudioPath).toLowerCase() || '.mp3'
+    const sourceBgPath = data.customBgAudioPath || data.exportSettings?.customBgAudioPath
+    if (sourceBgPath && fs.existsSync(sourceBgPath)) {
+      const ext = path.extname(sourceBgPath).toLowerCase() || '.mp3'
       const bgFileName = `custom_bg${ext}`
       const targetBgPath = path.join(stagingDir, bgFileName)
 
       try {
-        fs.linkSync(data.customBgAudioPath, targetBgPath)
+        fs.linkSync(sourceBgPath, targetBgPath)
       } catch {
-        fs.copyFileSync(data.customBgAudioPath, targetBgPath)
+        fs.copyFileSync(sourceBgPath, targetBgPath)
       }
 
       manifest.customBgAudioFileName = bgFileName
       manifest.customBgAudioPath = null
+      if (manifest.exportSettings) {
+        manifest.exportSettings.customBgAudioPath = null
+        manifest.exportSettings.customBgAudioFileName = bgFileName
+      }
+    } else {
+      manifest.customBgAudioFileName = null
+      manifest.customBgAudioPath = null
+      if (manifest.exportSettings) {
+        manifest.exportSettings.customBgAudioPath = null
+        manifest.exportSettings.customBgAudioFileName = null
+      }
     }
 
     // 3. Bundle takes
@@ -583,8 +599,22 @@ ipcMain.handle('project:load', async (_, filePath) => {
       if (project.customBgAudioPath) {
         if (fs.existsSync(project.customBgAudioPath)) {
           project.customBgAudioMediaUrl = pathToMediaUrl(project.customBgAudioPath)
+          if (project.exportSettings) {
+            project.exportSettings.customBgAudioPath = project.customBgAudioPath
+          }
         } else {
           warnings.push(`Trilha de áudio M&E não encontrada: ${project.customBgAudioPath}`)
+          project.customBgAudioPath = null
+          project.customBgAudioMediaUrl = null
+          if (project.exportSettings) {
+            project.exportSettings.customBgAudioPath = null
+          }
+        }
+      } else {
+        project.customBgAudioPath = null
+        project.customBgAudioMediaUrl = null
+        if (project.exportSettings) {
+          project.exportSettings.customBgAudioPath = null
         }
       }
 
@@ -647,6 +677,27 @@ ipcMain.handle('project:load', async (_, filePath) => {
         if (fs.existsSync(extractedBgPath)) {
           project.customBgAudioPath = extractedBgPath
           project.customBgAudioMediaUrl = pathToMediaUrl(extractedBgPath)
+          if (project.exportSettings) {
+            project.exportSettings.customBgAudioPath = extractedBgPath
+          }
+        } else {
+          warnings.push('Trilha de áudio M&E não encontrada dentro do pacote do projeto.')
+          project.customBgAudioPath = null
+          project.customBgAudioMediaUrl = null
+          if (project.exportSettings) {
+            project.exportSettings.customBgAudioPath = null
+          }
+        }
+      } else if (project.customBgAudioPath && fs.existsSync(project.customBgAudioPath)) {
+        project.customBgAudioMediaUrl = pathToMediaUrl(project.customBgAudioPath)
+        if (project.exportSettings) {
+          project.exportSettings.customBgAudioPath = project.customBgAudioPath
+        }
+      } else {
+        project.customBgAudioPath = null
+        project.customBgAudioMediaUrl = null
+        if (project.exportSettings) {
+          project.exportSettings.customBgAudioPath = null
         }
       }
 

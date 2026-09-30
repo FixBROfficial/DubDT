@@ -9,6 +9,20 @@ import { SaveProjectModal } from './components/SaveProjectModal'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { CheckCircle2, AlertTriangle, Info, X } from 'lucide-react'
 
+export const initialExportSettings: ExportSettings = {
+  includeOriginalAudio: true,
+  originalAudioVolume: 0.7,
+  customBgAudioPath: null,
+  customBgAudioVolume: 0.8,
+  recordedVoicesVolume: 1.2,
+  voicePreset: 'clean',
+  enableNoiseSuppression: false,
+  noiseSuppressionLevel: 50,
+  exportIndividualClips: false,
+  clipFormat: 'video',
+  outputDir: '',
+}
+
 export const App: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<AppStep>('annotate')
 
@@ -44,19 +58,7 @@ export const App: React.FC = () => {
   })
 
   // Export Settings
-  const [exportSettings, setExportSettings] = useState<ExportSettings>({
-    includeOriginalAudio: true,
-    originalAudioVolume: 0.7,
-    customBgAudioPath: null,
-    customBgAudioVolume: 0.8,
-    recordedVoicesVolume: 1.2,
-    voicePreset: 'clean',
-    enableNoiseSuppression: false,
-    noiseSuppressionLevel: 50,
-    exportIndividualClips: false,
-    clipFormat: 'video',
-    outputDir: '',
-  })
+  const [exportSettings, setExportSettings] = useState<ExportSettings>(initialExportSettings)
 
   // Settings Modal State
   const [isSettingsOpen, setIsSettingsOpen] = useState<boolean>(false)
@@ -129,6 +131,7 @@ export const App: React.FC = () => {
     setVideoMediaUrl(null)
     setVideoName(null)
     setLines([])
+    setExportSettings(initialExportSettings)
     setCurrentProjectPath(null)
     setCurrentProjectName(null)
     setCurrentLayer(1)
@@ -261,14 +264,13 @@ export const App: React.FC = () => {
 
         // Restore settings
         if (project.audioSettings) setAudioSettings(project.audioSettings)
-        if (project.exportSettings) {
-          setExportSettings((prev) => ({
-            ...prev,
-            ...project.exportSettings,
-            customBgAudioPath:
-              project.customBgAudioPath || project.exportSettings.customBgAudioPath || null,
-          }))
-        }
+        const loadedBgAudio =
+          project.customBgAudioPath || project.exportSettings?.customBgAudioPath || null
+        setExportSettings({
+          ...initialExportSettings,
+          ...(project.exportSettings || {}),
+          customBgAudioPath: loadedBgAudio,
+        })
 
         // Restore layer & embed mode
         setCurrentLayer(project.currentLayer || 1)
@@ -307,7 +309,13 @@ export const App: React.FC = () => {
         const name = file.name.replace(/\.dubdt$/i, '')
         setLines(project.lines || [])
         if (project.audioSettings) setAudioSettings(project.audioSettings)
-        if (project.exportSettings) setExportSettings(project.exportSettings)
+        const loadedBgAudio =
+          project.customBgAudioPath || project.exportSettings?.customBgAudioPath || null
+        setExportSettings({
+          ...initialExportSettings,
+          ...(project.exportSettings || {}),
+          customBgAudioPath: loadedBgAudio,
+        })
         setCurrentProjectName(name)
         showNotification(`Projeto "${name}" carregado.`, 'success')
       } catch (err) {
@@ -330,6 +338,7 @@ export const App: React.FC = () => {
     setVideoMediaUrl(null)
     setVideoName(null)
     setLines([])
+    setExportSettings(initialExportSettings)
     setCurrentProjectPath(null)
     setCurrentProjectName(null)
     setCurrentLayer(1)
@@ -393,6 +402,7 @@ export const App: React.FC = () => {
           setVideoMediaUrl(file.mediaUrl)
           setVideoName(file.name)
           setLines([]) // reset lines for new video
+          setExportSettings((prev) => ({ ...prev, customBgAudioPath: null })) // reset M&E for new video
           showNotification(`Vídeo carregado: ${file.name}`, 'info')
         }
       } catch (err) {
@@ -412,6 +422,7 @@ export const App: React.FC = () => {
       setVideoMediaUrl(url)
       setVideoName(file.name)
       setLines([])
+      setExportSettings((prev) => ({ ...prev, customBgAudioPath: null }))
       showNotification(`Vídeo carregado: ${file.name}`, 'info')
     }
   }
