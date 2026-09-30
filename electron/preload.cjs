@@ -1,4 +1,5 @@
 const { contextBridge, ipcRenderer } = require('electron')
+const { pathToFileURL } = require('url')
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Dialogs
@@ -19,5 +20,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   exportScriptTxt: (filePath, lines) => ipcRenderer.invoke('fs:exportScriptTxt', { filePath, lines }),
 
   // Platform & paths
-  convertToMediaUrl: (filePath) => `media://${encodeURIComponent(filePath.replace(/\\/g, '/'))}`,
+  convertToMediaUrl: (filePath) => {
+    if (!filePath) return ''
+    if (filePath.startsWith('media:') || filePath.startsWith('blob:')) return filePath
+    try {
+      return pathToFileURL(filePath).href.replace(/^file:/, 'media:')
+    } catch {
+      return `media:///${filePath.replace(/\\/g, '/')}`
+    }
+  },
 })
+

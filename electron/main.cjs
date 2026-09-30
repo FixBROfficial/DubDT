@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, protocol, net } = require('electron
 const path = require('path')
 const fs = require('fs')
 const { spawn } = require('child_process')
-const { pathToFileURL } = require('url')
+const { pathToFileURL, fileURLToPath } = require('url')
 // Disable GPU hardware acceleration if not supported or when running in restricted environments
 app.disableHardwareAcceleration()
 app.commandLine.appendSwitch('disable-gpu')
@@ -32,6 +32,46 @@ function ensureDirectories() {
   }
 }
 
+function pathToMediaUrl(filePath) {
+  if (!filePath) return ''
+  return pathToFileURL(path.resolve(filePath)).href.replace(/^file:/, 'media:')
+}
+
+function mediaUrlToPath(mediaUrl) {
+  try {
+    const fileUrl = mediaUrl.replace(/^media:/, 'file:')
+    let p = fileURLToPath(fileUrl)
+    if (process.platform === 'win32' && p.startsWith('\\\\') && p.length > 3 && p[3] === '\\') {
+      p = p[2] + ':' + p.substring(3)
+    }
+    return p
+  } catch {
+    let raw = decodeURIComponent(mediaUrl.replace(/^media:\/{1,3}/, ''))
+    if (/^\/[a-zA-Z]:/.test(raw)) {
+      raw = raw.slice(1)
+    } else if (/^[a-zA-Z]\//.test(raw)) {
+      raw = raw[0] + ':' + raw.slice(1)
+    }
+    return path.normalize(raw)
+  }
+}
+
+function registerMediaProtocol() {
+  protocol.handle('media', async (request) => {
+    try {
+      const targetPath = mediaUrlToPath(request.url)
+      if (!fs.existsSync(targetPath)) {
+        console.warn('[media protocol] Arquivo não encontrado:', targetPath, 'para URL:', request.url)
+        return new Response('File not found', { status: 404 })
+      }
+      return await net.fetch(pathToFileURL(targetPath).href)
+    } catch (e) {
+      console.error('[media protocol] Erro ao servir mídia:', e)
+      return new Response('Error loading media', { status: 500 })
+    }
+  })
+}
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1366,
@@ -48,20 +88,6 @@ function createWindow() {
     },
   })
 
-  // Set protocol handler for media streaming
-  protocol.handle('media', (request) => {
-    try {
-      let rawPath = decodeURIComponent(request.url.replace(/^media:\/\//, ''))
-      if (/^\/[a-zA-Z]:/.test(rawPath)) {
-        rawPath = rawPath.slice(1)
-      }
-      return net.fetch(pathToFileURL(rawPath).toString())
-    } catch (e) {
-      console.error('Error serving media protocol:', e)
-      return new Response('File not found', { status: 404 })
-    }
-  })
-
   const devUrl = 'http://localhost:5173'
   if (process.env.VITE_DEV_SERVER_URL || process.argv.includes('--dev')) {
     mainWindow.loadURL(devUrl)
@@ -72,6 +98,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   ensureDirectories()
+  registerMediaProtocol()
   createWindow()
 
   app.on('activate', () => {
@@ -99,7 +126,7 @@ ipcMain.handle('dialog:selectVideoFile', async () => {
   return {
     path: filePath,
     name: path.basename(filePath),
-    mediaUrl: `media://${filePath.replace(/\\/g, '/')}`,
+    mediaUrl: pathToMediaUrl(filePath),
   }
 })
 
@@ -117,7 +144,7 @@ ipcMain.handle('dialog:selectAudioFile', async () => {
   return {
     path: filePath,
     name: path.basename(filePath),
-    mediaUrl: `media://${filePath.replace(/\\/g, '/')}`,
+    mediaUrl: pathToMediaUrl(filePath),
   }
 })
 
@@ -160,7 +187,7 @@ ipcMain.handle('ffmpeg:extractAudioWaveform', async (_, videoPath) => {
       if (code === 0) {
         resolve({
           path: outputPath,
-          mediaUrl: `media://${outputPath.replace(/\\/g, '/')}`,
+          mediaUrl: pathToMediaUrl(outputPath),
         })
       } else {
         reject(new Error(`FFmpeg falhou com código ${code}`))
@@ -177,7 +204,7 @@ ipcMain.handle('fs:saveTakeAudio', async (_, { lineId, takeNumber, buffer }) => 
   fs.writeFileSync(filePath, Buffer.from(buffer))
   return {
     filePath,
-    mediaUrl: `media://${filePath.replace(/\\/g, '/')}`,
+    mediaUrl: pathToMediaUrl(filePath),
   }
 })
 
