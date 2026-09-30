@@ -251,14 +251,16 @@ export const Navbar: React.FC<NavbarProps> = ({
           </div>
         )}
 
-        {/* Global Layer Switcher */}
-        <div className="pl-2 border-l border-zinc-900">
-          <LayerSelector
-            currentLayer={currentLayer}
-            onLayerChange={onLayerChange}
-            totalLinesByLayer={linesCountByLayer}
-          />
-        </div>
+        {/* Global Layer Switcher (only shown when a video/project is active) */}
+        {(videoName || linesCount > 0) && (
+          <div className="pl-2 border-l border-zinc-900">
+            <LayerSelector
+              currentLayer={currentLayer}
+              onLayerChange={onLayerChange}
+              totalLinesByLayer={linesCountByLayer}
+            />
+          </div>
+        )}
       </div>
 
       {/* Minimal Stepper Navigation */}
