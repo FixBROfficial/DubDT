@@ -1,6 +1,8 @@
 const { app, BrowserWindow, ipcMain, dialog, protocol, net } = require('electron')
 const path = require('path')
 const fs = require('fs')
+const crypto = require('crypto')
+const tar = require('tar')
 const { spawn } = require('child_process')
 const { Readable } = require('stream')
 const { pathToFileURL, fileURLToPath } = require('url')
@@ -26,11 +28,16 @@ protocol.registerSchemesAsPrivileged([
 
 let mainWindow = null
 let projectTakesDir = null
+let projectSessionsDir = null
 
 function ensureDirectories() {
   projectTakesDir = path.join(app.getPath('userData'), 'dubdt_takes')
+  projectSessionsDir = path.join(app.getPath('userData'), 'dubdt_sessions')
   if (!fs.existsSync(projectTakesDir)) {
     fs.mkdirSync(projectTakesDir, { recursive: true })
+  }
+  if (!fs.existsSync(projectSessionsDir)) {
+    fs.mkdirSync(projectSessionsDir, { recursive: true })
   }
 }
 
@@ -312,11 +319,117 @@ ipcMain.handle('dialog:selectProjectFileToSave', async (_, defaultName) => {
 
 ipcMain.handle('project:save', async (_, { filePath, data }) => {
   try {
-    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
     addRecentProject(filePath)
+
+    // Staging directory for bundling
+    const stagingBase = path.join(app.getPath('userData'), 'dubdt_staging')
+    if (!fs.existsSync(stagingBase)) {
+      fs.mkdirSync(stagingBase, { recursive: true })
+    }
+    const stagingDir = path.join(stagingBase, `stage_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`)
+    fs.mkdirSync(stagingDir, { recursive: true })
+
+    const manifest = {
+      ...data,
+      dubdtVersion: '2.0',
+      updatedAt: Date.now(),
+    }
+
+    // 1. Bundle video file directly into the .dubdt package
+    if (data.videoPath && fs.existsSync(data.videoPath)) {
+      const ext = path.extname(data.videoPath).toLowerCase() || '.mp4'
+      const videoFileName = `video${ext}`
+      const targetVideoPath = path.join(stagingDir, videoFileName)
+
+      try {
+        fs.linkSync(data.videoPath, targetVideoPath)
+      } catch {
+        fs.copyFileSync(data.videoPath, targetVideoPath)
+      }
+
+      manifest.videoFileName = videoFileName
+      manifest.videoOriginalName = data.videoName || path.basename(data.videoPath)
+      manifest.videoPath = null // portable
+    }
+
+    // 2. Bundle custom background audio if present
+    if (data.customBgAudioPath && fs.existsSync(data.customBgAudioPath)) {
+      const ext = path.extname(data.customBgAudioPath).toLowerCase() || '.mp3'
+      const bgFileName = `custom_bg${ext}`
+      const targetBgPath = path.join(stagingDir, bgFileName)
+
+      try {
+        fs.linkSync(data.customBgAudioPath, targetBgPath)
+      } catch {
+        fs.copyFileSync(data.customBgAudioPath, targetBgPath)
+      }
+
+      manifest.customBgAudioFileName = bgFileName
+      manifest.customBgAudioPath = null
+    }
+
+    // 3. Bundle takes
+    const takesStagingDir = path.join(stagingDir, 'takes')
+    fs.mkdirSync(takesStagingDir, { recursive: true })
+
+    if (Array.isArray(manifest.lines)) {
+      manifest.lines = manifest.lines.map((line) => {
+        if (!Array.isArray(line.takes)) return line
+
+        const bundledTakes = line.takes.map((take) => {
+          if (take.filePath && fs.existsSync(take.filePath)) {
+            const takeFileName = path.basename(take.filePath)
+            const targetTakePath = path.join(takesStagingDir, takeFileName)
+
+            if (!fs.existsSync(targetTakePath)) {
+              try {
+                fs.linkSync(take.filePath, targetTakePath)
+              } catch {
+                fs.copyFileSync(take.filePath, targetTakePath)
+              }
+            }
+
+            return {
+              ...take,
+              relativeFilePath: `takes/${takeFileName}`,
+              filePath: '',
+              audioBlobUrl: undefined,
+            }
+          }
+          return take
+        })
+
+        return { ...line, takes: bundledTakes }
+      })
+    }
+
+    // 4. Write manifest
+    fs.writeFileSync(path.join(stagingDir, 'project.json'), JSON.stringify(manifest, null, 2), 'utf-8')
+
+    // 5. Pack everything into .dubdt archive via tar
+    const entries = fs.readdirSync(stagingDir)
+
+    const targetFolder = path.dirname(filePath)
+    if (!fs.existsSync(targetFolder)) {
+      fs.mkdirSync(targetFolder, { recursive: true })
+    }
+
+    await tar.c(
+      {
+        file: filePath,
+        cwd: stagingDir,
+      },
+      entries
+    )
+
+    // 6. Clean up staging directory
+    try {
+      fs.rmSync(stagingDir, { recursive: true, force: true })
+    } catch (e) {}
+
     return { success: true, filePath }
   } catch (err) {
-    console.error('Erro ao salvar arquivo de projeto:', err)
+    console.error('Erro ao salvar arquivo de projeto (.dubdt):', err)
     throw err
   }
 })
@@ -326,41 +439,115 @@ ipcMain.handle('project:load', async (_, filePath) => {
     if (!fs.existsSync(filePath)) {
       throw new Error(`Arquivo de projeto não encontrado: ${filePath}`)
     }
-    const content = fs.readFileSync(filePath, 'utf-8')
-    const project = JSON.parse(content)
-    addRecentProject(filePath)
 
+    addRecentProject(filePath)
     const warnings = []
 
-    // Verify video file exists & generate mediaUrl
-    if (project.videoPath) {
-      if (fs.existsSync(project.videoPath)) {
+    // Check if legacy JSON or TAR archive
+    const fd = fs.openSync(filePath, 'r')
+    const headerBuf = Buffer.alloc(16)
+    fs.readSync(fd, headerBuf, 0, 16, 0)
+    fs.closeSync(fd)
+
+    const isLegacyJson = headerBuf.toString('utf-8').trim().startsWith('{')
+
+    let project = null
+
+    if (isLegacyJson) {
+      // Legacy JSON fallback
+      const content = fs.readFileSync(filePath, 'utf-8')
+      project = JSON.parse(content)
+
+      if (project.videoPath) {
+        if (fs.existsSync(project.videoPath)) {
+          project.videoMediaUrl = pathToMediaUrl(project.videoPath)
+        } else {
+          warnings.push(`Arquivo de vídeo não encontrado no caminho original: ${project.videoPath}`)
+          project.videoMediaUrl = null
+        }
+      }
+
+      if (project.customBgAudioPath) {
+        if (fs.existsSync(project.customBgAudioPath)) {
+          project.customBgAudioMediaUrl = pathToMediaUrl(project.customBgAudioPath)
+        } else {
+          warnings.push(`Trilha de áudio M&E não encontrada: ${project.customBgAudioPath}`)
+        }
+      }
+
+      if (Array.isArray(project.lines)) {
+        for (const line of project.lines) {
+          if (Array.isArray(line.takes)) {
+            for (const take of line.takes) {
+              if (take.filePath) {
+                if (fs.existsSync(take.filePath)) {
+                  take.audioBlobUrl = pathToMediaUrl(take.filePath)
+                } else {
+                  warnings.push(`Gravação não encontrada: ${take.filePath}`)
+                }
+              }
+            }
+          }
+        }
+      }
+    } else {
+      // TAR archive containing embedded video, takes, and project.json!
+      const projectId = crypto.createHash('md5').update(filePath).digest('hex').slice(0, 12)
+      const sessionDir = path.join(projectSessionsDir, projectId)
+      if (!fs.existsSync(sessionDir)) {
+        fs.mkdirSync(sessionDir, { recursive: true })
+      }
+
+      await tar.x({
+        file: filePath,
+        cwd: sessionDir,
+      })
+
+      const manifestPath = path.join(sessionDir, 'project.json')
+      if (!fs.existsSync(manifestPath)) {
+        throw new Error('Arquivo de projeto corrompido: project.json não encontrado dentro do pacote.')
+      }
+
+      project = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'))
+
+      // Locate embedded video
+      if (project.videoFileName) {
+        const extractedVideoPath = path.join(sessionDir, project.videoFileName)
+        if (fs.existsSync(extractedVideoPath)) {
+          project.videoPath = extractedVideoPath
+          project.videoMediaUrl = pathToMediaUrl(extractedVideoPath)
+          project.videoName = project.videoOriginalName || path.basename(extractedVideoPath)
+        } else {
+          warnings.push('Vídeo não encontrado dentro do pacote do projeto.')
+          project.videoPath = null
+          project.videoMediaUrl = null
+        }
+      } else if (project.videoPath && fs.existsSync(project.videoPath)) {
         project.videoMediaUrl = pathToMediaUrl(project.videoPath)
-      } else {
-        warnings.push(`Arquivo de vídeo não encontrado no caminho: ${project.videoPath}`)
-        project.videoMediaUrl = null
       }
-    }
 
-    // Verify custom M&E background audio
-    if (project.customBgAudioPath) {
-      if (fs.existsSync(project.customBgAudioPath)) {
-        project.customBgAudioMediaUrl = pathToMediaUrl(project.customBgAudioPath)
-      } else {
-        warnings.push(`Trilha de áudio M&E não encontrada: ${project.customBgAudioPath}`)
+      // Locate embedded custom background audio
+      if (project.customBgAudioFileName) {
+        const extractedBgPath = path.join(sessionDir, project.customBgAudioFileName)
+        if (fs.existsSync(extractedBgPath)) {
+          project.customBgAudioPath = extractedBgPath
+          project.customBgAudioMediaUrl = pathToMediaUrl(extractedBgPath)
+        }
       }
-    }
 
-    // Verify take audio files
-    if (Array.isArray(project.lines)) {
-      for (const line of project.lines) {
-        if (Array.isArray(line.takes)) {
-          for (const take of line.takes) {
-            if (take.filePath) {
-              if (fs.existsSync(take.filePath)) {
+      // Locate embedded takes
+      if (Array.isArray(project.lines)) {
+        for (const line of project.lines) {
+          if (Array.isArray(line.takes)) {
+            for (const take of line.takes) {
+              if (take.relativeFilePath) {
+                const extractedTakePath = path.join(sessionDir, take.relativeFilePath)
+                if (fs.existsSync(extractedTakePath)) {
+                  take.filePath = extractedTakePath
+                  take.audioBlobUrl = pathToMediaUrl(extractedTakePath)
+                }
+              } else if (take.filePath && fs.existsSync(take.filePath)) {
                 take.audioBlobUrl = pathToMediaUrl(take.filePath)
-              } else {
-                warnings.push(`Gravação não encontrada: ${take.filePath}`)
               }
             }
           }
@@ -370,7 +557,7 @@ ipcMain.handle('project:load', async (_, filePath) => {
 
     return { success: true, data: project, warnings }
   } catch (err) {
-    console.error('Erro ao abrir arquivo de projeto:', err)
+    console.error('Erro ao abrir arquivo de projeto (.dubdt):', err)
     throw err
   }
 })

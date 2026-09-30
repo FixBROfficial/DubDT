@@ -145,12 +145,13 @@ export const App: React.FC = () => {
           filePath.split(/[\\/]/).pop()?.replace(/\.dubdt$/i, '') || 'Projeto'
         const projectData = buildProjectData(projectName)
 
+        showNotification('Empacotando e salvando projeto com vídeo...', 'info')
         await window.electronAPI.saveProjectFile(filePath, projectData)
         setCurrentProjectPath(filePath)
         setCurrentProjectName(projectName)
         window.electronAPI.setWindowTitle(`DubDT - ${projectName}`)
         loadRecents()
-        showNotification(`Projeto salvo: ${projectName}.dubdt`, 'success')
+        showNotification(`Projeto salvo com vídeo embutido: ${projectName}.dubdt`, 'success')
       } catch (err: any) {
         console.error('Erro ao salvar projeto:', err)
         showNotification(`Falha ao salvar projeto: ${err?.message}`, 'warning')
@@ -180,6 +181,7 @@ export const App: React.FC = () => {
     if (window.electronAPI) {
       try {
         const projectData = buildProjectData()
+        showNotification('Empacotando e salvando projeto com vídeo...', 'info')
         await window.electronAPI.saveProjectFile(currentProjectPath, projectData)
         loadRecents()
         showNotification(`Projeto salvo com sucesso!`, 'success')
@@ -200,6 +202,7 @@ export const App: React.FC = () => {
         }
         if (!filePath) return
 
+        showNotification('Carregando e descompactando projeto...', 'info')
         const res = await window.electronAPI.loadProjectFile(filePath)
         if (!res || !res.data) {
           showNotification('Arquivo de projeto inválido ou corrompido.', 'warning')

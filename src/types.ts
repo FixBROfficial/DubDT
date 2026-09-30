@@ -57,7 +57,10 @@ export interface DubDTProject {
   updatedAt: number
   videoPath: string | null
   videoName: string | null
+  videoFileName?: string | null
+  videoOriginalName?: string | null
   customBgAudioPath: string | null
+  customBgAudioFileName?: string | null
   lines: DialogueLine[]
   audioSettings: AudioSettings
   exportSettings: ExportSettings
