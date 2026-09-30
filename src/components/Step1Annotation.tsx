@@ -23,6 +23,7 @@ interface Step1AnnotationProps {
   setLines: React.Dispatch<React.SetStateAction<DialogueLine[]>>
   onSelectVideo: () => void
   onAdvanceToRecording: () => void
+  isActive?: boolean
 }
 
 export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
@@ -33,6 +34,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   setLines,
   onSelectVideo,
   onAdvanceToRecording,
+  isActive = true,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const waveformContainerRef = useRef<HTMLDivElement | null>(null)
@@ -65,6 +67,21 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   const playingLineRef = useRef<DialogueLine | null>(null)
   const linesRef = useRef<DialogueLine[]>(lines)
   linesRef.current = lines
+
+  // Pause playback when tab becomes inactive
+  useEffect(() => {
+    if (isActive === false) {
+      if (wsRef.current && wsRef.current.isPlaying()) {
+        wsRef.current.pause()
+      }
+      if (videoRef.current && !videoRef.current.paused) {
+        videoRef.current.pause()
+      }
+      setPlayingLineId(null)
+      playingLineRef.current = null
+      setIsPlaying(false)
+    }
+  }, [isActive])
 
   // Format seconds to mm:ss.ms
   const formatTime = (sec: number) => {
@@ -125,7 +142,8 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
           const { duration: audioDur, peaks } = await window.electronAPI.getWaveformPeaks(videoPath)
           if (!isMounted) return
           if (peaks && peaks.length > 0) {
-            await ws.load(videoMediaUrl, [peaks], audioDur)
+            const validDur = (audioDur && audioDur > 0) ? audioDur : (videoRef.current?.duration && videoRef.current.duration > 0 ? videoRef.current.duration : 1)
+            await ws.load(videoMediaUrl, [peaks], validDur)
             return
           }
         }
@@ -154,6 +172,10 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       const d = ws.getDuration()
       if (d > 0) setDuration(d)
 
+      try {
+        ws.zoom(zoomLevel)
+      } catch (e) {}
+
       lines.forEach((l) => {
         wsRegions.addRegion({
           id: l.id,
@@ -170,7 +192,6 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     ws.on('timeupdate', (time) => {
       setCurrentTime(time)
       if (playingLineRef.current && time >= playingLineRef.current.endTime) {
-        videoRef.current?.pause()
         ws.pause()
         if (videoRef.current) videoRef.current.currentTime = playingLineRef.current.startTime
         ws.setTime(playingLineRef.current.startTime)
@@ -178,6 +199,16 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
         playingLineRef.current = null
         setIsPlaying(false)
       }
+    })
+
+    ws.on('interaction', () => {
+      setPlayingLineId(null)
+      playingLineRef.current = null
+    })
+
+    ws.on('seeking', () => {
+      setPlayingLineId(null)
+      playingLineRef.current = null
     })
 
     ws.on('play', () => {
@@ -216,13 +247,11 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
 
     wsRegions.on('region-clicked', (region: any, e: MouseEvent) => {
       e.stopPropagation()
-      const targetLine = linesRef.current.find((l) => l.id === region.id)
-      if (targetLine) {
-        handlePlayLine(targetLine)
-      } else {
-        if (videoRef.current) videoRef.current.currentTime = region.start
-        ws.setTime(region.start)
-      }
+      // Clicking a region seeks there freely without clamping continuous playback
+      setPlayingLineId(null)
+      playingLineRef.current = null
+      if (videoRef.current) videoRef.current.currentTime = region.start
+      ws.setTime(region.start)
     })
 
     return () => {
@@ -235,14 +264,39 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
 
   useEffect(() => {
     if (wsRef.current) {
-      wsRef.current.zoom(zoomLevel)
+      try {
+        if ((wsRef.current as any).decodedData) {
+          wsRef.current.zoom(zoomLevel)
+        }
+      } catch (e) {
+        console.warn('WaveSurfer zoom prevented before ready:', e)
+      }
     }
   }, [zoomLevel])
+
+  const togglePlay = useCallback(() => {
+    setPlayingLineId(null)
+    playingLineRef.current = null
+    if (!wsRef.current) return
+    if (isPlaying) {
+      wsRef.current.pause()
+    } else {
+      wsRef.current.play()
+    }
+  }, [isPlaying])
 
   useEffect(() => {
     let disableDrag: (() => void) | null = null
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return
+
+      if (e.code === 'Space') {
+        e.preventDefault()
+        togglePlay()
+        return
+      }
+
       if (e.key === 'Control' && wsRegionsRef.current && !disableDrag) {
         setIsCtrlHeld(true)
         disableDrag = wsRegionsRef.current.enableDragSelection({
@@ -269,7 +323,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       window.removeEventListener('keyup', handleKeyUp)
       if (disableDrag) disableDrag()
     }
-  }, [])
+  }, [togglePlay])
 
   const handleVideoTimeUpdate = () => {
     if (videoRef.current) {
@@ -277,8 +331,8 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       setCurrentTime(vTime)
 
       if (playingLineRef.current && vTime >= playingLineRef.current.endTime) {
-        videoRef.current.pause()
-        videoRef.current.currentTime = playingLineRef.current.startTime
+        wsRef.current?.pause()
+        if (videoRef.current) videoRef.current.currentTime = playingLineRef.current.startTime
         if (wsRef.current) wsRef.current.setTime(playingLineRef.current.startTime)
         setPlayingLineId(null)
         playingLineRef.current = null
@@ -286,21 +340,6 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       }
     }
   }
-
-  const togglePlay = useCallback(() => {
-    if (playingLineId) {
-      setPlayingLineId(null)
-      playingLineRef.current = null
-    }
-    if (!wsRef.current) return
-    if (isPlaying) {
-      wsRef.current.pause()
-      videoRef.current?.pause()
-    } else {
-      wsRef.current.play()
-      videoRef.current?.play()
-    }
-  }, [isPlaying, playingLineId])
 
   const handlePlayLine = (line: DialogueLine) => {
     if (playingLineId === line.id) {

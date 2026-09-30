@@ -5,6 +5,7 @@ import { Step1Annotation } from './components/Step1Annotation'
 import { Step2Recording } from './components/Step2Recording'
 import { Step3Export } from './components/Step3Export'
 import { AudioSettingsModal } from './components/AudioSettingsModal'
+import { ErrorBoundary } from './components/ErrorBoundary'
 
 export const App: React.FC = () => {
   const [currentStep, setCurrentStep] = useState<AppStep>('annotate')
@@ -104,41 +105,45 @@ export const App: React.FC = () => {
       />
 
       {/* Stepper Views */}
-      <main className="flex-1 flex flex-col overflow-hidden">
-        {currentStep === 'annotate' && (
-          <Step1Annotation
-            videoPath={videoPath}
-            videoMediaUrl={videoMediaUrl}
-            videoName={videoName}
-            lines={lines}
-            setLines={setLines}
-            onSelectVideo={handleSelectVideo}
-            onAdvanceToRecording={() => setCurrentStep('record')}
-          />
-        )}
+      <main className="flex-1 flex flex-col overflow-hidden relative">
+        <ErrorBoundary>
+          <div className={`flex-1 flex flex-col overflow-hidden ${currentStep === 'annotate' ? '' : 'hidden'}`}>
+            <Step1Annotation
+              videoPath={videoPath}
+              videoMediaUrl={videoMediaUrl}
+              videoName={videoName}
+              lines={lines}
+              setLines={setLines}
+              onSelectVideo={handleSelectVideo}
+              onAdvanceToRecording={() => setCurrentStep('record')}
+              isActive={currentStep === 'annotate'}
+            />
+          </div>
 
-        {currentStep === 'record' && (
-          <Step2Recording
-            videoMediaUrl={videoMediaUrl || ''}
-            lines={lines}
-            setLines={setLines}
-            audioSettings={audioSettings}
-            onUpdateAudioSettings={(newSettings) =>
-              setAudioSettings((prev) => ({ ...prev, ...newSettings }))
-            }
-            onOpenSettings={() => setIsSettingsOpen(true)}
-            onAdvanceToExport={() => setCurrentStep('export')}
-          />
-        )}
+          <div className={`flex-1 flex flex-col overflow-hidden ${currentStep === 'record' ? '' : 'hidden'}`}>
+            <Step2Recording
+              videoMediaUrl={videoMediaUrl || ''}
+              lines={lines}
+              setLines={setLines}
+              audioSettings={audioSettings}
+              onUpdateAudioSettings={(newSettings) =>
+                setAudioSettings((prev) => ({ ...prev, ...newSettings }))
+              }
+              onOpenSettings={() => setIsSettingsOpen(true)}
+              onAdvanceToExport={() => setCurrentStep('export')}
+              isActive={currentStep === 'record'}
+            />
+          </div>
 
-        {currentStep === 'export' && (
-          <Step3Export
-            videoPath={videoPath}
-            lines={lines}
-            exportSettings={exportSettings}
-            setExportSettings={setExportSettings}
-          />
-        )}
+          <div className={`flex-1 flex flex-col overflow-hidden ${currentStep === 'export' ? '' : 'hidden'}`}>
+            <Step3Export
+              videoPath={videoPath}
+              lines={lines}
+              exportSettings={exportSettings}
+              setExportSettings={setExportSettings}
+            />
+          </div>
+        </ErrorBoundary>
       </main>
 
       {/* Audio Settings Modal */}

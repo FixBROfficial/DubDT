@@ -21,6 +21,7 @@ interface Step2RecordingProps {
   onUpdateAudioSettings: (settings: Partial<AudioSettings>) => void
   onOpenSettings: () => void
   onAdvanceToExport: () => void
+  isActive?: boolean
 }
 
 export const Step2Recording: React.FC<Step2RecordingProps> = ({
@@ -31,9 +32,11 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
   onUpdateAudioSettings,
   onOpenSettings,
   onAdvanceToExport,
+  isActive = true,
 }) => {
   const [currentLineIndex, setCurrentLineIndex] = useState<number>(0)
-  const currentLine = lines[currentLineIndex] || null
+  const safeLineIndex = lines.length > 0 ? Math.min(currentLineIndex, lines.length - 1) : 0
+  const currentLine = lines[safeLineIndex] || null
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [isPlayingPreview, setIsPlayingPreview] = useState<boolean>(false)
@@ -76,13 +79,43 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
     setIsPlayingPreview(false)
   }, [currentLine])
 
-  useEffect(() => {
+  const seekToCurrentLine = useCallback((customTime?: number) => {
     if (videoRef.current && currentLine) {
-      stopPreview()
-      const seekTime = Math.max(0, currentLine.startTime - (audioSettings.preRollSeconds || 0))
-      videoRef.current.currentTime = seekTime
+      const preRoll = audioSettings.preRollSeconds || 0
+      const target = customTime !== undefined ? customTime : Math.max(0, currentLine.startTime - preRoll)
+      videoRef.current.currentTime = target
     }
-  }, [currentLineIndex, currentLine, audioSettings.preRollSeconds, stopPreview])
+  }, [currentLine, audioSettings.preRollSeconds])
+
+  // Stop everything when tab becomes inactive
+  useEffect(() => {
+    if (isActive === false) {
+      stopPreview()
+      if (takeAudioRef.current) {
+        takeAudioRef.current.pause()
+      }
+      setPlayingTakeId(null)
+      if (recordingTimeoutRef.current) {
+        clearTimeout(recordingTimeoutRef.current)
+        recordingTimeoutRef.current = null
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+        mediaRecorderRef.current.stop()
+      }
+      if (videoRef.current) {
+        videoRef.current.pause()
+      }
+      setIsRecording(false)
+      setIsCountingDown(false)
+    }
+  }, [isActive, stopPreview])
+
+  useEffect(() => {
+    if (isActive && videoRef.current && currentLine) {
+      stopPreview()
+      seekToCurrentLine()
+    }
+  }, [currentLineIndex, currentLine?.id, isActive, seekToCurrentLine, stopPreview])
 
   const stopTakePreview = () => {
     if (takeAudioRef.current) {
@@ -255,9 +288,19 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
       setIsRecording(true)
 
       if (videoRef.current) {
+        videoRef.current.pause()
         videoRef.current.currentTime = currentLine.startTime
         videoRef.current.volume = audioSettings.originalAudioVolumeDuringRecording
-        videoRef.current.play()
+
+        const startVideo = () => {
+          videoRef.current?.play().catch(console.error)
+        }
+
+        if (videoRef.current.seeking) {
+          videoRef.current.addEventListener('seeked', startVideo, { once: true })
+        } else {
+          startVideo()
+        }
       }
 
       const recordingDurationMs = Math.max(1000, ((currentLine.endTime - currentLine.startTime) + 2.5) * 1000)
@@ -342,15 +385,29 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
 
       const video = videoRef.current
       video.pause()
-      video.currentTime = currentLine.startTime
       video.volume = audioSettings.masterVolume
-      video.play().catch(console.error)
-      setIsPlayingPreview(true)
+      video.currentTime = currentLine.startTime
 
-      const lineDurationMs = Math.max(1000, ((currentLine.endTime - currentLine.startTime) + 2.5) * 1000)
-      previewTimeoutRef.current = setTimeout(() => {
-        stopPreview()
-      }, lineDurationMs)
+      const startPlay = () => {
+        video.play().then(() => {
+          setIsPlayingPreview(true)
+        }).catch(console.error)
+
+        const lineDurationMs = Math.max(1000, ((currentLine.endTime - currentLine.startTime) + 2.5) * 1000)
+        previewTimeoutRef.current = setTimeout(() => {
+          stopPreview()
+        }, lineDurationMs)
+      }
+
+      if (video.seeking) {
+        const onSeeked = () => {
+          video.removeEventListener('seeked', onSeeked)
+          startPlay()
+        }
+        video.addEventListener('seeked', onSeeked, { once: true })
+      } else {
+        startPlay()
+      }
     }
   }
 
@@ -459,6 +516,7 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
               ref={videoRef}
               src={videoMediaUrl}
               onTimeUpdate={handleVideoTimeUpdate}
+              onLoadedMetadata={() => seekToCurrentLine()}
               className="max-h-full max-w-full rounded object-contain"
             />
 

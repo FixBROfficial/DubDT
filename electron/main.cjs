@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, protocol, net } = require('electron
 const path = require('path')
 const fs = require('fs')
 const { spawn } = require('child_process')
+const { Readable } = require('stream')
 const { pathToFileURL, fileURLToPath } = require('url')
 // Disable GPU hardware acceleration if not supported or when running in restricted environments
 app.disableHardwareAcceleration()
@@ -56,6 +57,35 @@ function mediaUrlToPath(mediaUrl) {
   }
 }
 
+function getMimeType(filePath) {
+  const ext = path.extname(filePath).toLowerCase()
+  switch (ext) {
+    case '.mp4':
+    case '.m4v':
+      return 'video/mp4'
+    case '.webm':
+      return 'video/webm'
+    case '.mkv':
+      return 'video/x-matroska'
+    case '.mov':
+      return 'video/quicktime'
+    case '.avi':
+      return 'video/x-msvideo'
+    case '.wav':
+      return 'audio/wav'
+    case '.mp3':
+      return 'audio/mpeg'
+    case '.ogg':
+      return 'audio/ogg'
+    case '.aac':
+      return 'audio/aac'
+    case '.flac':
+      return 'audio/flac'
+    default:
+      return 'application/octet-stream'
+  }
+}
+
 function registerMediaProtocol() {
   protocol.handle('media', async (request) => {
     try {
@@ -64,7 +94,57 @@ function registerMediaProtocol() {
         console.warn('[media protocol] Arquivo não encontrado:', targetPath, 'para URL:', request.url)
         return new Response('File not found', { status: 404 })
       }
-      return await net.fetch(pathToFileURL(targetPath).href)
+
+      const stat = fs.statSync(targetPath)
+      const fileSize = stat.size
+      const mimeType = getMimeType(targetPath)
+      const rangeHeader = request.headers.get('Range') || request.headers.get('range')
+
+      if (rangeHeader) {
+        const matches = rangeHeader.match(/bytes=(\d*)-(\d*)/)
+        if (matches) {
+          let start = matches[1] ? parseInt(matches[1], 10) : 0
+          let end = matches[2] ? parseInt(matches[2], 10) : fileSize - 1
+
+          if (isNaN(start)) start = 0
+          if (isNaN(end) || end >= fileSize) end = fileSize - 1
+
+          if (start >= fileSize || start > end) {
+            return new Response('Requested Range Not Satisfiable', {
+              status: 416,
+              headers: {
+                'Content-Range': `bytes */${fileSize}`,
+              },
+            })
+          }
+
+          const chunkSize = end - start + 1
+          const nodeStream = fs.createReadStream(targetPath, { start, end })
+          const webStream = Readable.toWeb(nodeStream)
+
+          return new Response(webStream, {
+            status: 206,
+            headers: {
+              'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+              'Accept-Ranges': 'bytes',
+              'Content-Length': String(chunkSize),
+              'Content-Type': mimeType,
+            },
+          })
+        }
+      }
+
+      // No range header: return stream with Accept-Ranges
+      const nodeStream = fs.createReadStream(targetPath)
+      const webStream = Readable.toWeb(nodeStream)
+      return new Response(webStream, {
+        status: 200,
+        headers: {
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(fileSize),
+          'Content-Type': mimeType,
+        },
+      })
     } catch (e) {
       console.error('[media protocol] Erro ao servir mídia:', e)
       return new Response('Error loading media', { status: 500 })
@@ -171,15 +251,20 @@ function getVideoDuration(filePath) {
   return new Promise((resolve) => {
     const proc = spawn('ffprobe', [
       '-v', 'error',
-      '-show_entries', 'format=duration',
+      '-show_entries', 'format=duration:stream=duration',
       '-of', 'default=noprint_wrappers=1:nokey=1',
       filePath,
-    ])
+    ], { stdio: ['ignore', 'pipe', 'ignore'] })
     let out = ''
     proc.stdout.on('data', (d) => { out += d.toString() })
     proc.on('close', () => {
-      const dur = parseFloat(out.trim())
-      resolve(isNaN(dur) ? 0 : dur)
+      const lines = out.trim().split(/\r?\n/)
+      let maxDur = 0
+      for (const line of lines) {
+        const val = parseFloat(line.trim())
+        if (!isNaN(val) && val > maxDur) maxDur = val
+      }
+      resolve(maxDur)
     })
     proc.on('error', () => resolve(0))
   })
@@ -219,7 +304,7 @@ ipcMain.handle('ffmpeg:getWaveformPeaks', async (_, videoPath) => {
       'pipe:1',
     ]
 
-    const proc = spawn('ffmpeg', args)
+    const proc = spawn('ffmpeg', args, { stdio: ['ignore', 'pipe', 'ignore'] })
     const peaks = []
     let currentMax = 0
     let sampleCounter = 0
