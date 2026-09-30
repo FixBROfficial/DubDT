@@ -13,11 +13,12 @@ protocol.registerSchemesAsPrivileged([
   {
     scheme: 'media',
     privileges: {
+      standard: true,
       secure: true,
       supportFetchAPI: true,
-      standard: true,
       stream: true,
       bypassCSP: true,
+      corsEnabled: true,
     },
   },
 ])
@@ -91,13 +92,27 @@ function getMimeType(filePath) {
   }
 }
 
+const MEDIA_CORS_HEADERS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+  'Access-Control-Allow-Headers': 'Range, Content-Type',
+  'Access-Control-Expose-Headers': 'Content-Range, Content-Length, Accept-Ranges',
+}
+
 function registerMediaProtocol() {
   protocol.handle('media', (request) => {
     try {
+      if (request.method === 'OPTIONS') {
+        return new Response(null, {
+          status: 204,
+          headers: MEDIA_CORS_HEADERS,
+        })
+      }
+
       const targetPath = mediaUrlToPath(request.url)
       if (!fs.existsSync(targetPath)) {
         console.warn('[media protocol] Arquivo não encontrado:', targetPath, 'para URL:', request.url)
-        return new Response('File not found', { status: 404 })
+        return new Response('File not found', { status: 404, headers: MEDIA_CORS_HEADERS })
       }
 
       const stat = fs.statSync(targetPath)
@@ -108,6 +123,7 @@ function registerMediaProtocol() {
         return new Response(null, {
           status: 200,
           headers: {
+            ...MEDIA_CORS_HEADERS,
             'Accept-Ranges': 'bytes',
             'Content-Length': String(fileSize),
             'Content-Type': mimeType,
@@ -116,6 +132,7 @@ function registerMediaProtocol() {
       }
 
       const rangeHeader = request.headers.get('Range') || request.headers.get('range')
+      const maxChunkSize = 4 * 1024 * 1024 // 4 MB chunk max for open-ended range streaming
 
       if (rangeHeader) {
         const matches = rangeHeader.match(/bytes=(\d*)-(\d*)/)
@@ -127,13 +144,13 @@ function registerMediaProtocol() {
             end = parseInt(matches[2], 10)
           } else if (matches[1]) {
             start = parseInt(matches[1], 10)
-            end = fileSize - 1
+            end = Math.min(start + maxChunkSize - 1, fileSize - 1)
           } else if (matches[2]) {
             start = Math.max(0, fileSize - parseInt(matches[2], 10))
             end = fileSize - 1
           } else {
             start = 0
-            end = fileSize - 1
+            end = Math.min(maxChunkSize - 1, fileSize - 1)
           }
 
           if (isNaN(start) || start < 0) start = 0
@@ -143,6 +160,7 @@ function registerMediaProtocol() {
             return new Response('Requested Range Not Satisfiable', {
               status: 416,
               headers: {
+                ...MEDIA_CORS_HEADERS,
                 'Content-Range': `bytes */${fileSize}`,
               },
             })
@@ -151,6 +169,7 @@ function registerMediaProtocol() {
           const chunkSize = end - start + 1
           const nodeStream = fs.createReadStream(targetPath, { start, end })
           nodeStream.on('error', (err) => {
+            if (err.name === 'AbortError' || err.code === 'ABORT_ERR' || err.message?.includes('aborted')) return
             console.warn('[media protocol] Stream error:', err.message)
           })
           const webStream = Readable.toWeb(nodeStream)
@@ -158,6 +177,7 @@ function registerMediaProtocol() {
           return new Response(webStream, {
             status: 206,
             headers: {
+              ...MEDIA_CORS_HEADERS,
               'Content-Range': `bytes ${start}-${end}/${fileSize}`,
               'Accept-Ranges': 'bytes',
               'Content-Length': String(chunkSize),
@@ -167,23 +187,27 @@ function registerMediaProtocol() {
         }
       }
 
-      // No range header: return stream with Accept-Ranges
-      const nodeStream = fs.createReadStream(targetPath)
+      // No range header: return first 4MB chunk or full file if smaller, with Accept-Ranges
+      const initialEnd = Math.min(maxChunkSize - 1, fileSize - 1)
+      const nodeStream = fs.createReadStream(targetPath, { start: 0, end: initialEnd })
       nodeStream.on('error', (err) => {
+        if (err.name === 'AbortError' || err.code === 'ABORT_ERR' || err.message?.includes('aborted')) return
         console.warn('[media protocol] Stream error:', err.message)
       })
       const webStream = Readable.toWeb(nodeStream)
       return new Response(webStream, {
-        status: 200,
+        status: 206,
         headers: {
+          ...MEDIA_CORS_HEADERS,
+          'Content-Range': `bytes 0-${initialEnd}/${fileSize}`,
           'Accept-Ranges': 'bytes',
-          'Content-Length': String(fileSize),
+          'Content-Length': String(initialEnd + 1),
           'Content-Type': mimeType,
         },
       })
     } catch (e) {
       console.error('[media protocol] Erro ao servir mídia:', e)
-      return new Response('Error loading media', { status: 500 })
+      return new Response('Error loading media', { status: 500, headers: MEDIA_CORS_HEADERS })
     }
   })
 }

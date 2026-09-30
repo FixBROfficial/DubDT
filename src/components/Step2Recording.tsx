@@ -79,6 +79,7 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
   const gainNodeRef = useRef<GainNode | null>(null)
   const previewTimeoutRef = useRef<any>(null)
   const recordingTimeoutRef = useRef<any>(null)
+  const isSeekingPreviewRef = useRef<boolean>(false)
 
   // Active Take audio preview player
   const [playingTakeId, setPlayingTakeId] = useState<string | null>(null)
@@ -319,15 +320,15 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
         videoRef.current.currentTime = currentLine.startTime
         videoRef.current.volume = audioSettings.originalAudioVolumeDuringRecording
 
+        let started = false
         const startVideo = () => {
+          if (started) return
+          started = true
           videoRef.current?.play().catch(console.error)
         }
 
-        if (videoRef.current.seeking) {
-          videoRef.current.addEventListener('seeked', startVideo, { once: true })
-        } else {
-          startVideo()
-        }
+        videoRef.current.addEventListener('seeked', startVideo, { once: true })
+        setTimeout(startVideo, 300)
       }
 
       const recordingDurationMs = Math.max(1000, ((currentLine.endTime - currentLine.startTime) + 2.5) * 1000)
@@ -415,9 +416,14 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
       const video = videoRef.current
       video.pause()
       video.volume = audioSettings.masterVolume
+      isSeekingPreviewRef.current = true
       video.currentTime = currentLine.startTime
 
+      let started = false
       const startPlay = () => {
+        if (started) return
+        started = true
+        isSeekingPreviewRef.current = false
         video.play().then(() => {
           setIsPlayingPreview(true)
         }).catch(console.error)
@@ -428,15 +434,8 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
         }, lineDurationMs)
       }
 
-      if (video.seeking) {
-        const onSeeked = () => {
-          video.removeEventListener('seeked', onSeeked)
-          startPlay()
-        }
-        video.addEventListener('seeked', onSeeked, { once: true })
-      } else {
-        startPlay()
-      }
+      video.addEventListener('seeked', startPlay, { once: true })
+      setTimeout(startPlay, 300)
     }
   }
 
@@ -444,11 +443,22 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
     if (!videoRef.current || !currentLine) return
     const vTime = videoRef.current.currentTime
 
-    if (isPlayingPreview && vTime >= currentLine.endTime) {
+    if (
+      isPlayingPreview &&
+      !isSeekingPreviewRef.current &&
+      !videoRef.current.seeking &&
+      vTime >= currentLine.startTime &&
+      vTime >= currentLine.endTime - 0.05
+    ) {
       stopPreview()
     }
 
-    if (isRecording && vTime >= currentLine.endTime) {
+    if (
+      isRecording &&
+      !videoRef.current.seeking &&
+      vTime >= currentLine.startTime &&
+      vTime >= currentLine.endTime
+    ) {
       stopRecording()
     }
   }

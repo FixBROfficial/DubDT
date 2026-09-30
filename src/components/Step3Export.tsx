@@ -138,6 +138,10 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
       })
       setIsPlaying(false)
     } else {
+      if (videoRef.current.ended || (duration > 0 && videoRef.current.currentTime >= duration - 0.1)) {
+        videoRef.current.currentTime = 0
+        if (bgAudioRef.current) bgAudioRef.current.currentTime = 0
+      }
       videoRef.current
         .play()
         .then(() => {
@@ -151,7 +155,7 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
         })
         .catch(console.error)
     }
-  }, [isPlaying, customBgMediaUrl])
+  }, [isPlaying, customBgMediaUrl, duration])
 
   // Keyboard shortcut: Space toggles mix preview when active
   useEffect(() => {

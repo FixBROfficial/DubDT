@@ -426,14 +426,19 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     const vTime = video.currentTime
     setCurrentTime(vTime)
 
-    if (isSeekingToLineRef.current) return
+    if (isSeekingToLineRef.current || video.seeking) return
 
     const targetLine = playingLineRef.current
-    if (targetLine && vTime >= targetLine.startTime && vTime >= targetLine.endTime) {
+    if (
+      targetLine &&
+      vTime >= targetLine.startTime &&
+      vTime >= targetLine.endTime - 0.05
+    ) {
       video.pause()
       video.currentTime = targetLine.startTime
       setPlayingLineId(null)
       playingLineRef.current = null
+      isSeekingToLineRef.current = false
       setIsPlaying(false)
     }
   }
@@ -458,7 +463,10 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     video.pause()
     video.currentTime = line.startTime
 
+    let started = false
     const startPlayback = () => {
+      if (started) return
+      started = true
       isSeekingToLineRef.current = false
       video.play().then(() => {
         setIsPlaying(true)
@@ -467,11 +475,8 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       })
     }
 
-    if (video.seeking) {
-      video.addEventListener('seeked', startPlayback, { once: true })
-    } else {
-      setTimeout(startPlayback, 20)
-    }
+    video.addEventListener('seeked', startPlayback, { once: true })
+    setTimeout(startPlayback, 300)
   }
 
   const handleWaveformContextMenu = (e: React.MouseEvent) => {
@@ -724,6 +729,8 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
                 playsInline
                 onLoadedMetadata={handleLoadedMetadata}
                 onTimeUpdate={handleVideoTimeUpdate}
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
                 onClick={togglePlay}
                 className="max-h-full max-w-full rounded object-contain cursor-pointer"
               />
