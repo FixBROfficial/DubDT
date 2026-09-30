@@ -286,6 +286,8 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   }, [isPlaying])
 
   useEffect(() => {
+    if (!isActive) return
+
     let disableDrag: (() => void) | null = null
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -323,7 +325,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       window.removeEventListener('keyup', handleKeyUp)
       if (disableDrag) disableDrag()
     }
-  }, [togglePlay])
+  }, [isActive, togglePlay])
 
   const handleVideoTimeUpdate = () => {
     if (videoRef.current) {

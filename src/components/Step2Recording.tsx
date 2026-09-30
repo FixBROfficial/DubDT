@@ -329,6 +329,8 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
   }, [])
 
   useEffect(() => {
+    if (!isActive) return
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return
 
@@ -345,7 +347,7 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
       } else if (e.key === 'ArrowLeft') {
         e.preventDefault()
         handlePrevLine()
-      } else if (e.key === ' ') {
+      } else if (e.key === ' ' || e.code === 'Space') {
         e.preventDefault()
         handleTogglePreview()
       }
@@ -353,7 +355,7 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [isRecording, startRecordingProcess, stopRecording, currentLineIndex, lines.length])
+  }, [isActive, isRecording, startRecordingProcess, stopRecording, currentLineIndex, lines.length])
 
   const handleNextLine = () => {
     if (currentLineIndex < lines.length - 1) {
