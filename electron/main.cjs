@@ -6,6 +6,11 @@ const tar = require('tar')
 const { spawn } = require('child_process')
 const { Readable } = require('stream')
 const { pathToFileURL, fileURLToPath } = require('url')
+// Disable GPU hardware acceleration if not supported or when running in restricted environments
+app.disableHardwareAcceleration()
+app.commandLine.appendSwitch('disable-gpu')
+app.commandLine.appendSwitch('in-process-gpu')
+app.commandLine.appendSwitch('disable-accelerated-video-decode')
 app.commandLine.appendSwitch('no-sandbox')
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 // Register media scheme as privileged for streaming video/audio
@@ -62,6 +67,35 @@ function mediaUrlToPath(mediaUrl) {
   }
 }
 
+function getMimeType(filePath) {
+  const ext = path.extname(filePath).toLowerCase()
+  switch (ext) {
+    case '.mp4':
+    case '.m4v':
+      return 'video/mp4'
+    case '.webm':
+      return 'video/webm'
+    case '.mkv':
+      return 'video/x-matroska'
+    case '.mov':
+      return 'video/quicktime'
+    case '.avi':
+      return 'video/x-msvideo'
+    case '.wav':
+      return 'audio/wav'
+    case '.mp3':
+      return 'audio/mpeg'
+    case '.ogg':
+      return 'audio/ogg'
+    case '.aac':
+      return 'audio/aac'
+    case '.flac':
+      return 'audio/flac'
+    default:
+      return 'application/octet-stream'
+  }
+}
+
 function registerMediaProtocol() {
   protocol.handle('media', (request) => {
     try {
@@ -70,7 +104,88 @@ function registerMediaProtocol() {
         console.warn('[media protocol] Arquivo não encontrado:', targetPath, 'para URL:', request.url)
         return new Response('File not found', { status: 404 })
       }
-      return net.fetch(pathToFileURL(targetPath).toString())
+
+      const stat = fs.statSync(targetPath)
+      const fileSize = stat.size
+      const mimeType = getMimeType(targetPath)
+
+      if (request.method === 'HEAD') {
+        return new Response(null, {
+          status: 200,
+          headers: {
+            'Accept-Ranges': 'bytes',
+            'Content-Length': String(fileSize),
+            'Content-Type': mimeType,
+          },
+        })
+      }
+
+      const rangeHeader = request.headers.get('Range') || request.headers.get('range')
+
+      if (rangeHeader) {
+        const matches = rangeHeader.match(/bytes=(\d*)-(\d*)/)
+        if (matches) {
+          let start
+          let end
+          if (matches[1] && matches[2]) {
+            start = parseInt(matches[1], 10)
+            end = parseInt(matches[2], 10)
+          } else if (matches[1]) {
+            start = parseInt(matches[1], 10)
+            end = fileSize - 1
+          } else if (matches[2]) {
+            start = Math.max(0, fileSize - parseInt(matches[2], 10))
+            end = fileSize - 1
+          } else {
+            start = 0
+            end = fileSize - 1
+          }
+
+          if (isNaN(start) || start < 0) start = 0
+          if (isNaN(end) || end >= fileSize) end = fileSize - 1
+
+          if (start >= fileSize || start > end) {
+            return new Response('Requested Range Not Satisfiable', {
+              status: 416,
+              headers: {
+                'Content-Range': `bytes */${fileSize}`,
+              },
+            })
+          }
+
+          const chunkSize = end - start + 1
+          const nodeStream = fs.createReadStream(targetPath, { start, end })
+          nodeStream.on('error', (err) => {
+            console.warn('[media protocol] Stream error:', err.message)
+          })
+          const webStream = Readable.toWeb(nodeStream)
+
+          return new Response(webStream, {
+            status: 206,
+            headers: {
+              'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+              'Accept-Ranges': 'bytes',
+              'Content-Length': String(chunkSize),
+              'Content-Type': mimeType,
+            },
+          })
+        }
+      }
+
+      // No range header: return stream with Accept-Ranges
+      const nodeStream = fs.createReadStream(targetPath)
+      nodeStream.on('error', (err) => {
+        console.warn('[media protocol] Stream error:', err.message)
+      })
+      const webStream = Readable.toWeb(nodeStream)
+      return new Response(webStream, {
+        status: 200,
+        headers: {
+          'Accept-Ranges': 'bytes',
+          'Content-Length': String(fileSize),
+          'Content-Type': mimeType,
+        },
+      })
     } catch (e) {
       console.error('[media protocol] Erro ao servir mídia:', e)
       return new Response('Error loading media', { status: 500 })
