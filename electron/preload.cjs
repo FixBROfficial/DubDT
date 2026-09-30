@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveFileDialog: (options) => ipcRenderer.invoke('dialog:saveFile', options),
 
   // Audio extraction for Waveform
+  getWaveformPeaks: (videoPath) => ipcRenderer.invoke('ffmpeg:getWaveformPeaks', videoPath),
   extractAudioForWaveform: (videoPath) => ipcRenderer.invoke('ffmpeg:extractAudioWaveform', videoPath),
 
   // Take storage

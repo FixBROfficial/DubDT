@@ -165,7 +165,129 @@ ipcMain.handle('dialog:saveFile', async (_, options) => {
   return result.filePath
 })
 
-// 5. Extract Audio for fast Waveform visualization
+const peaksCache = new Map()
+
+function getVideoDuration(filePath) {
+  return new Promise((resolve) => {
+    const proc = spawn('ffprobe', [
+      '-v', 'error',
+      '-show_entries', 'format=duration',
+      '-of', 'default=noprint_wrappers=1:nokey=1',
+      filePath,
+    ])
+    let out = ''
+    proc.stdout.on('data', (d) => { out += d.toString() })
+    proc.on('close', () => {
+      const dur = parseFloat(out.trim())
+      resolve(isNaN(dur) ? 0 : dur)
+    })
+    proc.on('error', () => resolve(0))
+  })
+}
+
+// 5. Ultra-fast Streaming Waveform Peaks extraction
+ipcMain.handle('ffmpeg:getWaveformPeaks', async (_, videoPath) => {
+  if (!videoPath || !fs.existsSync(videoPath)) {
+    throw new Error('Arquivo de vídeo não encontrado.')
+  }
+
+  // Check cache first
+  try {
+    const stat = fs.statSync(videoPath)
+    const cacheKey = `${videoPath}_${stat.mtimeMs}`
+    if (peaksCache.has(cacheKey)) {
+      return peaksCache.get(cacheKey)
+    }
+  } catch (e) {}
+
+  const duration = await getVideoDuration(videoPath)
+
+  // Use 50 peaks per second for crisp waveform detail
+  // Downsample to 8000Hz mono s16le for maximum decoding speed without memory bloat
+  const targetSampleRate = 8000
+  const peaksPerSecond = 50
+  const samplesPerPeak = Math.floor(targetSampleRate / peaksPerSecond) // 160 samples per peak window
+
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-i', videoPath,
+      '-vn', '-sn', '-dn',
+      '-acodec', 'pcm_s16le',
+      '-ar', String(targetSampleRate),
+      '-ac', '1',
+      '-f', 's16le',
+      'pipe:1',
+    ]
+
+    const proc = spawn('ffmpeg', args)
+    const peaks = []
+    let currentMax = 0
+    let sampleCounter = 0
+    let remainder = Buffer.alloc(0)
+
+    proc.stdout.on('data', (chunk) => {
+      if (remainder.length > 0) {
+        chunk = Buffer.concat([remainder, chunk])
+        remainder = Buffer.alloc(0)
+      }
+
+      const sampleCount = Math.floor(chunk.length / 2)
+      const remainingBytes = chunk.length % 2
+      if (remainingBytes > 0) {
+        remainder = chunk.slice(chunk.length - remainingBytes)
+      }
+
+      for (let i = 0; i < sampleCount; i++) {
+        const val = Math.abs(chunk.readInt16LE(i * 2))
+        if (val > currentMax) currentMax = val
+        sampleCounter++
+
+        if (sampleCounter >= samplesPerPeak) {
+          peaks.push(currentMax / 32768)
+          currentMax = 0
+          sampleCounter = 0
+        }
+      }
+    })
+
+    proc.on('close', (code) => {
+      if (sampleCounter > 0) {
+        peaks.push(currentMax / 32768)
+      }
+
+      // Normalize peaks if maximum amplitude is low
+      let maxVal = 0
+      for (let i = 0; i < peaks.length; i++) {
+        if (peaks[i] > maxVal) maxVal = peaks[i]
+      }
+      if (maxVal > 0 && maxVal < 0.9) {
+        const factor = 1 / maxVal
+        for (let i = 0; i < peaks.length; i++) {
+          peaks[i] = Math.min(1, peaks[i] * factor)
+        }
+      }
+
+      const result = {
+        duration: duration || (peaks.length / peaksPerSecond),
+        peaks,
+      }
+
+      try {
+        const stat = fs.statSync(videoPath)
+        peaksCache.set(`${videoPath}_${stat.mtimeMs}`, result)
+      } catch (e) {}
+
+      resolve(result)
+    })
+
+    proc.on('error', (err) => {
+      console.error('Erro no FFmpeg ao extrair peaks:', err)
+      reject(err)
+    })
+  })
+})
+
+// 5b. Extract Audio for fast Waveform visualization (legacy fallback)
 ipcMain.handle('ffmpeg:extractAudioWaveform', async (_, videoPath) => {
   return new Promise((resolve, reject) => {
     const filename = `waveform_${Date.now()}.wav`

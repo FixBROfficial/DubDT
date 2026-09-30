@@ -85,6 +85,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
 
     const ws = WaveSurfer.create({
       container: waveformContainerRef.current,
+      media: videoRef.current || undefined,
       waveColor: '#3f3f46',
       progressColor: '#e4e4e7',
       cursorColor: '#ffffff',
@@ -110,24 +111,42 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     })
 
     wsRef.current = ws
+    let isMounted = true
 
     const loadAudioSource = async () => {
       try {
-        if (window.electronAPI && videoPath) {
-          const { mediaUrl } = await window.electronAPI.extractAudioForWaveform(videoPath)
-          ws.load(mediaUrl)
-        } else {
-          ws.load(videoMediaUrl)
+        if (window.electronAPI?.getWaveformPeaks && videoPath) {
+          const { duration: audioDur, peaks } = await window.electronAPI.getWaveformPeaks(videoPath)
+          if (!isMounted) return
+          if (peaks && peaks.length > 0) {
+            await ws.load(videoMediaUrl, [peaks], audioDur)
+            return
+          }
         }
+        if (!isMounted) return
+        await ws.load(videoMediaUrl)
       } catch (err) {
-        ws.load(videoMediaUrl)
+        console.warn('Erro na extração de peaks, fallback direto:', err)
+        if (isMounted) {
+          try {
+            await ws.load(videoMediaUrl)
+          } catch (e) {
+            console.error('Falha geral ao carregar áudio no wavesurfer:', e)
+          }
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoadingAudio(false)
+        }
       }
     }
     loadAudioSource()
 
     ws.on('ready', () => {
+      if (!isMounted) return
       setIsLoadingAudio(false)
-      setDuration(ws.getDuration())
+      const d = ws.getDuration()
+      if (d > 0) setDuration(d)
 
       lines.forEach((l) => {
         wsRegions.addRegion({
@@ -151,12 +170,16 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
 
     ws.on('play', () => {
       setIsPlaying(true)
-      videoRef.current?.play()
+      if (videoRef.current && videoRef.current.paused) {
+        videoRef.current.play().catch(() => {})
+      }
     })
 
     ws.on('pause', () => {
       setIsPlaying(false)
-      videoRef.current?.pause()
+      if (videoRef.current && !videoRef.current.paused) {
+        videoRef.current.pause()
+      }
     })
 
     wsRegions.on('region-created', (region) => {
@@ -186,6 +209,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     })
 
     return () => {
+      isMounted = false
       ws.destroy()
       wsRef.current = null
       wsRegionsRef.current = null
@@ -411,8 +435,9 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
               {/* Waveform Container */}
               <div className="relative rounded bg-[#09090b] border border-zinc-900 overflow-hidden">
                 {isLoadingAudio && (
-                  <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-10 text-xs text-zinc-400">
-                    <span>Processando áudio para waveform...</span>
+                  <div className="absolute inset-0 bg-black/80 flex items-center justify-center gap-2.5 z-10 text-xs text-zinc-300 backdrop-blur-[2px]">
+                    <div className="w-3.5 h-3.5 border-2 border-zinc-500 border-t-white rounded-full animate-spin" />
+                    <span>Processando waveform...</span>
                   </div>
                 )}
                 <div ref={waveformContainerRef} className="w-full" />
