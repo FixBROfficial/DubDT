@@ -6,11 +6,6 @@ const tar = require('tar')
 const { spawn } = require('child_process')
 const { Readable } = require('stream')
 const { pathToFileURL, fileURLToPath } = require('url')
-// Disable GPU hardware acceleration if not supported or when running in restricted environments
-app.disableHardwareAcceleration()
-app.commandLine.appendSwitch('disable-gpu')
-app.commandLine.appendSwitch('in-process-gpu')
-app.commandLine.appendSwitch('disable-accelerated-video-decode')
 app.commandLine.appendSwitch('no-sandbox')
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 // Register media scheme as privileged for streaming video/audio
