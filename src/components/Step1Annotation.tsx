@@ -60,6 +60,12 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   const [editingLineId, setEditingLineId] = useState<string | null>(null)
   const [editingText, setEditingText] = useState<string>('')
 
+  // Active playing line preview
+  const [playingLineId, setPlayingLineId] = useState<string | null>(null)
+  const playingLineRef = useRef<DialogueLine | null>(null)
+  const linesRef = useRef<DialogueLine[]>(lines)
+  linesRef.current = lines
+
   // Format seconds to mm:ss.ms
   const formatTime = (sec: number) => {
     if (isNaN(sec) || sec < 0) return '00:00.000'
@@ -163,8 +169,14 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
 
     ws.on('timeupdate', (time) => {
       setCurrentTime(time)
-      if (videoRef.current && Math.abs(videoRef.current.currentTime - time) > 0.15) {
-        videoRef.current.currentTime = time
+      if (playingLineRef.current && time >= playingLineRef.current.endTime) {
+        videoRef.current?.pause()
+        ws.pause()
+        if (videoRef.current) videoRef.current.currentTime = playingLineRef.current.startTime
+        ws.setTime(playingLineRef.current.startTime)
+        setPlayingLineId(null)
+        playingLineRef.current = null
+        setIsPlaying(false)
       }
     })
 
@@ -183,7 +195,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     })
 
     wsRegions.on('region-created', (region) => {
-      if (!lines.some((l) => l.id === region.id)) {
+      if (!linesRef.current.some((l) => l.id === region.id)) {
         setPendingRegion({
           region,
           start: region.start,
@@ -202,10 +214,15 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       )
     })
 
-    wsRegions.on('region-clicked', (region, e) => {
+    wsRegions.on('region-clicked', (region: any, e: MouseEvent) => {
       e.stopPropagation()
-      ws.setTime(region.start)
-      if (videoRef.current) videoRef.current.currentTime = region.start
+      const targetLine = linesRef.current.find((l) => l.id === region.id)
+      if (targetLine) {
+        handlePlayLine(targetLine)
+      } else {
+        if (videoRef.current) videoRef.current.currentTime = region.start
+        ws.setTime(region.start)
+      }
     })
 
     return () => {
@@ -255,16 +272,26 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   }, [])
 
   const handleVideoTimeUpdate = () => {
-    if (videoRef.current && wsRef.current) {
+    if (videoRef.current) {
       const vTime = videoRef.current.currentTime
       setCurrentTime(vTime)
-      if (Math.abs(wsRef.current.getCurrentTime() - vTime) > 0.15) {
-        wsRef.current.setTime(vTime)
+
+      if (playingLineRef.current && vTime >= playingLineRef.current.endTime) {
+        videoRef.current.pause()
+        videoRef.current.currentTime = playingLineRef.current.startTime
+        if (wsRef.current) wsRef.current.setTime(playingLineRef.current.startTime)
+        setPlayingLineId(null)
+        playingLineRef.current = null
+        setIsPlaying(false)
       }
     }
   }
 
   const togglePlay = useCallback(() => {
+    if (playingLineId) {
+      setPlayingLineId(null)
+      playingLineRef.current = null
+    }
     if (!wsRef.current) return
     if (isPlaying) {
       wsRef.current.pause()
@@ -273,7 +300,32 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       wsRef.current.play()
       videoRef.current?.play()
     }
-  }, [isPlaying])
+  }, [isPlaying, playingLineId])
+
+  const handlePlayLine = (line: DialogueLine) => {
+    if (playingLineId === line.id) {
+      videoRef.current?.pause()
+      wsRef.current?.pause()
+      setPlayingLineId(null)
+      playingLineRef.current = null
+      setIsPlaying(false)
+      return
+    }
+
+    setPlayingLineId(line.id)
+    playingLineRef.current = line
+
+    if (videoRef.current) {
+      videoRef.current.pause()
+      videoRef.current.currentTime = line.startTime
+      videoRef.current.play().catch(console.error)
+    }
+    if (wsRef.current) {
+      wsRef.current.setTime(line.startTime)
+      wsRef.current.play().catch(console.error)
+    }
+    setIsPlaying(true)
+  }
 
   const handleSavePendingLine = () => {
     if (!pendingRegion) return
@@ -334,8 +386,20 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   }
 
   const handleSeekToLine = (line: DialogueLine) => {
-    if (wsRef.current) wsRef.current.setTime(line.startTime)
-    if (videoRef.current) videoRef.current.currentTime = line.startTime
+    if (playingLineId) {
+      videoRef.current?.pause()
+      wsRef.current?.pause()
+      setPlayingLineId(null)
+      playingLineRef.current = null
+      setIsPlaying(false)
+    }
+    if (videoRef.current) {
+      videoRef.current.pause()
+      videoRef.current.currentTime = line.startTime
+    }
+    if (wsRef.current) {
+      wsRef.current.setTime(line.startTime)
+    }
   }
 
   return (
@@ -502,13 +566,38 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
                   <div
                     key={line.id}
                     onClick={() => handleSeekToLine(line)}
-                    className="p-2 rounded bg-[#09090b] border border-zinc-900 hover:border-zinc-800 transition-colors cursor-pointer group space-y-1"
+                    className={`p-2 rounded transition-colors cursor-pointer group space-y-1 ${
+                      playingLineId === line.id
+                        ? 'border border-zinc-500 bg-zinc-900/80 shadow-sm'
+                        : 'bg-[#09090b] border border-zinc-900 hover:border-zinc-800'
+                    }`}
                   >
                     <div className="flex items-center justify-between text-[10px]">
-                      <span className="font-mono text-zinc-500 font-bold">#{index + 1}</span>
-                      <span className="font-mono text-zinc-600">
-                        {formatTime(line.startTime)} - {formatTime(line.endTime)}
-                      </span>
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-mono text-zinc-500 font-bold">#{index + 1}</span>
+                        <span className="font-mono text-zinc-400">
+                          {formatTime(line.startTime)} - {formatTime(line.endTime)}
+                        </span>
+                      </div>
+
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handlePlayLine(line)
+                        }}
+                        className={`p-1 rounded transition-colors ${
+                          playingLineId === line.id
+                            ? 'bg-white text-black'
+                            : 'hover:bg-zinc-800 text-zinc-400 hover:text-white'
+                        }`}
+                        title={playingLineId === line.id ? 'Pausar fala' : 'Ouvir trecho da fala'}
+                      >
+                        {playingLineId === line.id ? (
+                          <Pause className="w-2.5 h-2.5" />
+                        ) : (
+                          <Play className="w-2.5 h-2.5 ml-0.5" />
+                        )}
+                      </button>
                     </div>
 
                     {editingLineId === line.id ? (

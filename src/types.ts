@@ -35,6 +35,8 @@ export interface ExportSettings {
   customBgAudioVolume: number
   recordedVoicesVolume: number
   voicePreset: VoiceEffectPreset
+  enableNoiseSuppression: boolean
+  noiseSuppressionLevel: number // 10 to 100 (%)
   exportIndividualClips: boolean
   clipFormat: 'video' | 'audio'
   outputDir: string

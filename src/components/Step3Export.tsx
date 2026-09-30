@@ -81,6 +81,8 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
         customBgAudioVolume: exportSettings.customBgAudioVolume,
         recordedVoicesVolume: exportSettings.recordedVoicesVolume,
         voicePreset: exportSettings.voicePreset,
+        enableNoiseSuppression: exportSettings.enableNoiseSuppression,
+        noiseSuppressionLevel: exportSettings.noiseSuppressionLevel,
         lines,
       })
 
@@ -125,6 +127,8 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
         customBgAudioVolume: exportSettings.customBgAudioVolume,
         recordedVoicesVolume: exportSettings.recordedVoicesVolume,
         voicePreset: exportSettings.voicePreset,
+        enableNoiseSuppression: exportSettings.enableNoiseSuppression,
+        noiseSuppressionLevel: exportSettings.noiseSuppressionLevel,
         lines,
       })
 
@@ -162,6 +166,8 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
         lines,
         voicePreset: exportSettings.voicePreset,
         recordedVoicesVolume: exportSettings.recordedVoicesVolume,
+        enableNoiseSuppression: exportSettings.enableNoiseSuppression,
+        noiseSuppressionLevel: exportSettings.noiseSuppressionLevel,
       })
 
       setExportSuccessMessage(
@@ -289,6 +295,52 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
                   )
                 })}
               </div>
+            </div>
+
+            {/* Supressão de Ruído Modulável */}
+            <div className="space-y-2 pt-2 border-t border-zinc-900">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-zinc-400 font-medium">Supressão de Ruído</span>
+                <input
+                  type="checkbox"
+                  checked={exportSettings.enableNoiseSuppression}
+                  onChange={(e) =>
+                    setExportSettings((prev) => ({
+                      ...prev,
+                      enableNoiseSuppression: e.target.checked,
+                    }))
+                  }
+                  className="accent-white h-3.5 w-3.5 rounded bg-black border border-zinc-700 cursor-pointer"
+                />
+              </div>
+
+              {exportSettings.enableNoiseSuppression && (
+                <div className="space-y-1 bg-black/60 p-2 rounded border border-zinc-900 animate-in fade-in duration-100">
+                  <div className="flex justify-between text-[10px]">
+                    <span className="text-zinc-500">Redução de Ruído</span>
+                    <span className="font-mono text-zinc-300">
+                      {exportSettings.noiseSuppressionLevel}%
+                    </span>
+                  </div>
+                  <input
+                    type="range"
+                    min="10"
+                    max="100"
+                    step="5"
+                    value={exportSettings.noiseSuppressionLevel}
+                    onChange={(e) =>
+                      setExportSettings((prev) => ({
+                        ...prev,
+                        noiseSuppressionLevel: parseInt(e.target.value, 10),
+                      }))
+                    }
+                    className="w-full accent-white h-1 bg-zinc-800 rounded appearance-none cursor-pointer"
+                  />
+                  <p className="text-[9px] text-zinc-600 leading-tight">
+                    Filtro FFT ativado na mixagem final. A gravação original permanece limpa e sem cortes.
+                  </p>
+                </div>
+              )}
             </div>
           </div>
 

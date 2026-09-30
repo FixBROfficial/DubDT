@@ -47,7 +47,12 @@ export const AudioSettingsModal: React.FC<AudioSettingsModalProps> = ({
   const startMicTest = async () => {
     try {
       const constraints: MediaStreamConstraints = {
-        audio: settings.inputDeviceId ? { deviceId: { exact: settings.inputDeviceId } } : true,
+        audio: {
+          ...(settings.inputDeviceId ? { deviceId: { exact: settings.inputDeviceId } } : {}),
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
       }
       const stream = await navigator.mediaDevices.getUserMedia(constraints)
       streamRef.current = stream

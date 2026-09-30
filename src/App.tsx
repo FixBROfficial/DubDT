@@ -36,6 +36,8 @@ export const App: React.FC = () => {
     customBgAudioVolume: 0.8,
     recordedVoicesVolume: 1.2,
     voicePreset: 'clean',
+    enableNoiseSuppression: false,
+    noiseSuppressionLevel: 50,
     exportIndividualClips: false,
     clipFormat: 'video',
     outputDir: '',

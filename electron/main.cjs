@@ -330,34 +330,29 @@ ipcMain.handle('fs:saveTakeAudio', async (_, { lineId, takeNumber, buffer }) => 
   }
 })
 
-// 7. Export dialogue script as .txt
+// 7. Export dialogue script as .txt (clean dialogue lines separated by newline)
 ipcMain.handle('fs:exportScriptTxt', async (_, { filePath, lines }) => {
-  let content = '========================================\n'
-  content += '   DubDT - Roteiro de Dublagem & Falas\n'
-  content += `   Data: ${new Date().toLocaleString('pt-BR')}\n`
-  content += `   Total de falas: ${lines.length}\n`
-  content += '========================================\n\n'
+  const content = lines
+    .map((l) => (l.text || '').trim())
+    .filter((text) => text.length > 0)
+    .join('\n')
 
-  lines.forEach((line, idx) => {
-    const formatTime = (sec) => {
-      const m = Math.floor(sec / 60)
-      const s = Math.floor(sec % 60)
-      const ms = Math.floor((sec % 1) * 1000)
-      return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`
-    }
-    content += `[#${idx + 1}] ${formatTime(line.startTime)} -> ${formatTime(line.endTime)}\n`
-    content += `FALA: "${line.text}"\n`
-    content += `Takes gravados: ${line.takes ? line.takes.length : 0} (Take ativo: #${(line.activeTakeIndex || 0) + 1})\n`
-    content += '----------------------------------------\n\n'
-  })
-
-  fs.writeFileSync(filePath, content, 'utf-8')
+  fs.writeFileSync(filePath, content ? content + '\n' : '', 'utf-8')
   return true
 })
 
-// Helper: build filter strings for voice effects
-function getVoiceFilter(preset, volume) {
+// Helper: build filter strings for voice effects & modulatable noise suppression
+function getVoiceFilter(preset, volume, enableNoiseSuppression = false, noiseSuppressionLevel = 50) {
   let filter = `volume=${volume}`
+
+  // Modulatable noise suppression (active only if enabled by user in mixing)
+  if (enableNoiseSuppression) {
+    const level = Math.max(10, Math.min(100, noiseSuppressionLevel || 50))
+    // Map 10-100% to nr (noise reduction in dB): 6dB to 30dB
+    const nr = Math.round(6 + ((level - 10) / 90) * 24)
+    filter += `,afftdn=nr=${nr}:nf=-25`
+  }
+
   if (preset === 'loudnorm') {
     filter += ',loudnorm=I=-16:TP=-1.5:LRA=11'
   } else if (preset === 'radio') {
@@ -380,6 +375,8 @@ ipcMain.handle('ffmpeg:exportMix', async (_, options) => {
     customBgAudioVolume,
     recordedVoicesVolume,
     voicePreset,
+    enableNoiseSuppression,
+    noiseSuppressionLevel,
     lines, // array of dialogue lines with active takes
   } = options
 
@@ -438,10 +435,10 @@ ipcMain.handle('ffmpeg:exportMix', async (_, options) => {
       mixedAudioInputs.push('[bg_audio]')
     }
 
-    // 2. Dialogue takes with delay and voice effects
+    // 2. Dialogue takes with delay, voice effects, and modulatable noise suppression
     takeInputIndices.forEach((t, i) => {
       const delayMs = Math.round(t.startTime * 1000)
-      const voiceFilter = getVoiceFilter(voicePreset, recordedVoicesVolume)
+      const voiceFilter = getVoiceFilter(voicePreset, recordedVoicesVolume, enableNoiseSuppression, noiseSuppressionLevel)
       const outLabel = `voice_${i}`
       filterParts.push(`[${t.idx}:a]${voiceFilter},adelay=${delayMs}|${delayMs}[${outLabel}]`)
       mixedAudioInputs.push(`[${outLabel}]`)
@@ -501,6 +498,8 @@ ipcMain.handle('ffmpeg:exportClips', async (_, options) => {
     lines,
     voicePreset,
     recordedVoicesVolume,
+    enableNoiseSuppression,
+    noiseSuppressionLevel,
   } = options
 
   const results = []
@@ -522,7 +521,7 @@ ipcMain.handle('ffmpeg:exportClips', async (_, options) => {
     const clipOutputPath = path.join(outputDir, fileName)
 
     const duration = Math.max(0.1, line.endTime - line.startTime)
-    const voiceFilter = getVoiceFilter(voicePreset, recordedVoicesVolume)
+    const voiceFilter = getVoiceFilter(voicePreset, recordedVoicesVolume, enableNoiseSuppression, noiseSuppressionLevel)
 
     await new Promise((resolve) => {
       const args = ['-y']
