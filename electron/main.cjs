@@ -9,6 +9,7 @@ app.disableHardwareAcceleration()
 app.commandLine.appendSwitch('disable-gpu')
 app.commandLine.appendSwitch('in-process-gpu')
 app.commandLine.appendSwitch('no-sandbox')
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
 // Register media scheme as privileged for streaming video/audio
 protocol.registerSchemesAsPrivileged([
   {

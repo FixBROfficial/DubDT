@@ -236,10 +236,14 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
 
     ws.on('timeupdate', (time) => {
       setCurrentTime(time)
-      if (playingLineRef.current && time >= playingLineRef.current.endTime) {
+      const targetLine = playingLineRef.current
+      if (targetLine && time >= targetLine.endTime) {
         ws.pause()
-        if (videoRef.current) videoRef.current.currentTime = playingLineRef.current.startTime
-        ws.setTime(playingLineRef.current.startTime)
+        if (videoRef.current) {
+          videoRef.current.pause()
+          videoRef.current.currentTime = targetLine.startTime
+        }
+        ws.setTime(targetLine.startTime)
         setPlayingLineId(null)
         playingLineRef.current = null
         setIsPlaying(false)
@@ -247,11 +251,6 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     })
 
     ws.on('interaction', () => {
-      setPlayingLineId(null)
-      playingLineRef.current = null
-    })
-
-    ws.on('seeking', () => {
       setPlayingLineId(null)
       playingLineRef.current = null
     })
@@ -325,13 +324,48 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   const togglePlay = useCallback(() => {
     setPlayingLineId(null)
     playingLineRef.current = null
-    if (!wsRef.current) return
-    if (isPlaying) {
-      wsRef.current.pause()
-    } else {
-      wsRef.current.play()
+    const ws = wsRef.current
+    const video = videoRef.current
+    if (!ws && !video) return
+
+    if (video && (video.ended || (duration > 0 && video.currentTime >= duration - 0.1))) {
+      video.currentTime = 0
+      if (ws) ws.setTime(0)
     }
-  }, [isPlaying])
+
+    const currentlyPlaying = isPlaying || (ws ? ws.isPlaying() : false) || (video ? !video.paused : false)
+
+    if (currentlyPlaying) {
+      if (ws && ws.isPlaying()) ws.pause()
+      if (video && !video.paused) video.pause()
+      setIsPlaying(false)
+    } else {
+      if (video && video.seeking) {
+        const onSeeked = () => {
+          video.removeEventListener('seeked', onSeeked)
+          if (ws) {
+            ws.play().catch(console.error)
+          } else {
+            video.play().catch(console.error)
+          }
+          setIsPlaying(true)
+        }
+        video.addEventListener('seeked', onSeeked, { once: true })
+      } else {
+        if (ws) {
+          ws.play().then(() => {
+            if (video && video.paused) video.play().catch(() => {})
+            setIsPlaying(true)
+          }).catch((err) => {
+            console.error('ws.play erro, fallback para video.play:', err)
+            if (video) video.play().then(() => setIsPlaying(true)).catch(console.error)
+          })
+        } else if (video) {
+          video.play().then(() => setIsPlaying(true)).catch(console.error)
+        }
+      }
+    }
+  }, [isPlaying, duration])
 
   useEffect(() => {
     if (!isActive) return
@@ -382,10 +416,12 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       const vTime = videoRef.current.currentTime
       setCurrentTime(vTime)
 
-      if (playingLineRef.current && vTime >= playingLineRef.current.endTime) {
+      const targetLine = playingLineRef.current
+      if (targetLine && vTime >= targetLine.endTime) {
         wsRef.current?.pause()
-        if (videoRef.current) videoRef.current.currentTime = playingLineRef.current.startTime
-        if (wsRef.current) wsRef.current.setTime(playingLineRef.current.startTime)
+        videoRef.current.pause()
+        videoRef.current.currentTime = targetLine.startTime
+        if (wsRef.current) wsRef.current.setTime(targetLine.startTime)
         setPlayingLineId(null)
         playingLineRef.current = null
         setIsPlaying(false)
@@ -395,8 +431,8 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
 
   const handlePlayLine = (line: DialogueLine) => {
     if (playingLineId === line.id) {
-      videoRef.current?.pause()
-      wsRef.current?.pause()
+      if (videoRef.current) videoRef.current.pause()
+      if (wsRef.current) wsRef.current.pause()
       setPlayingLineId(null)
       playingLineRef.current = null
       setIsPlaying(false)
@@ -404,18 +440,45 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     }
 
     setPlayingLineId(line.id)
-    playingLineRef.current = line
+    playingLineRef.current = null // Avoid race condition while seeking to startTime
 
-    if (videoRef.current) {
-      videoRef.current.pause()
-      videoRef.current.currentTime = line.startTime
-      videoRef.current.play().catch(console.error)
+    const video = videoRef.current
+    const ws = wsRef.current
+
+    if (video) {
+      video.pause()
+      if (ws) ws.pause()
+
+      video.currentTime = line.startTime
+      if (ws) ws.setTime(line.startTime)
+
+      const startPlayback = () => {
+        playingLineRef.current = line
+        video.play().then(() => {
+          if (ws && !ws.isPlaying()) ws.play().catch(() => {})
+          setIsPlaying(true)
+        }).catch((err) => {
+          console.error('Erro ao dar play no vídeo da fala:', err)
+          if (ws) {
+            ws.play().then(() => setIsPlaying(true)).catch(console.error)
+          }
+        })
+      }
+
+      if (video.seeking) {
+        const onSeeked = () => {
+          video.removeEventListener('seeked', onSeeked)
+          startPlayback()
+        }
+        video.addEventListener('seeked', onSeeked, { once: true })
+      } else {
+        startPlayback()
+      }
+    } else if (ws) {
+      ws.setTime(line.startTime)
+      playingLineRef.current = line
+      ws.play().then(() => setIsPlaying(true)).catch(console.error)
     }
-    if (wsRef.current) {
-      wsRef.current.setTime(line.startTime)
-      wsRef.current.play().catch(console.error)
-    }
-    setIsPlaying(true)
   }
 
   const handleWaveformContextMenu = (e: React.MouseEvent) => {
@@ -571,18 +634,16 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   }
 
   const handleSeekToLine = (line: DialogueLine) => {
-    if (playingLineId) {
-      videoRef.current?.pause()
-      wsRef.current?.pause()
-      setPlayingLineId(null)
-      playingLineRef.current = null
-      setIsPlaying(false)
-    }
+    setPlayingLineId(null)
+    playingLineRef.current = null
+    setIsPlaying(false)
+
     if (videoRef.current) {
       videoRef.current.pause()
       videoRef.current.currentTime = line.startTime
     }
     if (wsRef.current) {
+      wsRef.current.pause()
       wsRef.current.setTime(line.startTime)
     }
   }
@@ -649,6 +710,8 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
               <video
                 ref={videoRef}
                 src={videoMediaUrl}
+                preload="auto"
+                playsInline
                 onTimeUpdate={handleVideoTimeUpdate}
                 onClick={togglePlay}
                 className="max-h-full max-w-full rounded object-contain cursor-pointer"
