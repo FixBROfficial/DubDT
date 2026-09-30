@@ -27,3 +27,22 @@
 ::-webkit-scrollbar-thumb:hover {
   background: #3f3f46;
 }
+
+/* WaveSurfer Region Styling */
+[part~="region"] {
+  border-left: 2px solid rgba(255, 255, 255, 0.4);
+  border-right: 2px solid rgba(255, 255, 255, 0.4);
+  transition: background-color 0.15s ease;
+}
+
+[part~="region-handle-left"],
+[part~="region-handle-right"] {
+  width: 8px !important;
+  cursor: ew-resize !important;
+  transition: background-color 0.15s ease;
+}
+
+[part~="region-handle-left"]:hover,
+[part~="region-handle-right"]:hover {
+  background-color: rgba(255, 255, 255, 0.5) !important;
+}

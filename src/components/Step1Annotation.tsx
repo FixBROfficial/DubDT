@@ -61,6 +61,29 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   // Editing existing line
   const [editingLineId, setEditingLineId] = useState<string | null>(null)
   const [editingText, setEditingText] = useState<string>('')
+  const [editingModalLine, setEditingModalLine] = useState<DialogueLine | null>(null)
+  const editInputRef = useRef<HTMLInputElement | null>(null)
+
+  // Right-click context menu
+  const [contextMenu, setContextMenu] = useState<{
+    x: number
+    y: number
+    line: DialogueLine
+  } | null>(null)
+
+  // Close context menu on global click or Escape
+  useEffect(() => {
+    const handleGlobalClick = () => setContextMenu(null)
+    const handleGlobalKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setContextMenu(null)
+    }
+    window.addEventListener('click', handleGlobalClick)
+    window.addEventListener('keydown', handleGlobalKeyDown)
+    return () => {
+      window.removeEventListener('click', handleGlobalClick)
+      window.removeEventListener('keydown', handleGlobalKeyDown)
+    }
+  }, [])
 
   // Active playing line preview
   const [playingLineId, setPlayingLineId] = useState<string | null>(null)
@@ -80,6 +103,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       setPlayingLineId(null)
       playingLineRef.current = null
       setIsPlaying(false)
+      setContextMenu(null)
     }
   }, [isActive])
 
@@ -91,6 +115,26 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     const ms = Math.floor((sec % 1) * 1000)
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`
   }
+
+  // Attach right-click context menu to a WaveSurfer region element
+  const attachRegionContextMenu = useCallback((region: any) => {
+    if (!region) return
+    const el = region.element
+    if (el) {
+      el.oncontextmenu = (e: MouseEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
+        const found = linesRef.current.find((l) => l.id === region.id)
+        if (found) {
+          setContextMenu({
+            x: Math.min(e.clientX, window.innerWidth - 200),
+            y: Math.min(e.clientY, window.innerHeight - 160),
+            line: found,
+          })
+        }
+      }
+    }
+  }, [])
 
   // Initialize WaveSurfer
   useEffect(() => {
@@ -177,15 +221,16 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       } catch (e) {}
 
       lines.forEach((l) => {
-        wsRegions.addRegion({
+        const reg = wsRegions.addRegion({
           id: l.id,
           start: l.startTime,
           end: l.endTime,
           content: l.text,
           color: 'rgba(255, 255, 255, 0.12)',
-          drag: true,
+          drag: false,
           resize: true,
         })
+        attachRegionContextMenu(reg)
       })
     })
 
@@ -225,7 +270,9 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       }
     })
 
-    wsRegions.on('region-created', (region) => {
+    wsRegions.on('region-created', (region: any) => {
+      region.setOptions({ drag: false, resize: true })
+      attachRegionContextMenu(region)
       if (!linesRef.current.some((l) => l.id === region.id)) {
         setPendingRegion({
           region,
@@ -237,7 +284,8 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       }
     })
 
-    wsRegions.on('region-updated', (region) => {
+    wsRegions.on('region-updated', (region: any) => {
+      attachRegionContextMenu(region)
       setLines((prev) =>
         prev.map((l) =>
           l.id === region.id ? { ...l, startTime: region.start, endTime: region.end } : l
@@ -303,6 +351,8 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
         setIsCtrlHeld(true)
         disableDrag = wsRegionsRef.current.enableDragSelection({
           color: 'rgba(255, 255, 255, 0.18)',
+          drag: false,
+          resize: true,
         })
       }
     }
@@ -368,6 +418,79 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     setIsPlaying(true)
   }
 
+  const handleWaveformContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    // 1. Try to find region element from e.target
+    let target = e.target as HTMLElement | null
+    let foundLine: DialogueLine | undefined
+
+    const regions = wsRegionsRef.current?.getRegions() || []
+    while (target && target !== waveformContainerRef.current) {
+      const matched = regions.find(
+        (r: any) => r.element && (r.element === target || r.element.contains(target))
+      )
+      if (matched) {
+        foundLine = linesRef.current.find((l) => l.id === matched.id)
+        break
+      }
+      target = target.parentElement
+    }
+
+    // 2. If not found by DOM hierarchy, match by timestamp of the click
+    if (!foundLine && wsRef.current && waveformContainerRef.current) {
+      const rect = waveformContainerRef.current.getBoundingClientRect()
+      const clickX = e.clientX - rect.left
+      const scrollLeft = (wsRef.current as any).getWrapper?.()?.scrollLeft || 0
+      const totalWidth = (wsRef.current as any).getWrapper?.()?.scrollWidth || rect.width
+      const duration = wsRef.current.getDuration() || 0
+      if (totalWidth > 0 && duration > 0) {
+        const clickTime = ((clickX + scrollLeft) / totalWidth) * duration
+        foundLine = linesRef.current.find(
+          (l) => clickTime >= l.startTime - 0.05 && clickTime <= l.endTime + 0.05
+        )
+      }
+    }
+
+    if (foundLine) {
+      setContextMenu({
+        x: Math.min(e.clientX, window.innerWidth - 200),
+        y: Math.min(e.clientY, window.innerHeight - 160),
+        line: foundLine,
+      })
+    }
+  }
+
+  const handleStartEdit = (line: DialogueLine) => {
+    setContextMenu(null)
+    setEditingModalLine(line)
+    setEditingText(line.text)
+    setTimeout(() => editInputRef.current?.focus(), 50)
+  }
+
+  const handleSaveModalEdit = () => {
+    if (!editingModalLine) return
+    const text = editingText.trim()
+    if (text) {
+      setLines((prev) =>
+        prev.map((l) => (l.id === editingModalLine.id ? { ...l, text } : l))
+      )
+      const regions = wsRegionsRef.current?.getRegions() || []
+      const target = regions.find((r: any) => r.id === editingModalLine.id)
+      if (target) {
+        target.setOptions({ content: text })
+      }
+    }
+    setEditingModalLine(null)
+    setEditingText('')
+  }
+
+  const handleCancelModalEdit = () => {
+    setEditingModalLine(null)
+    setEditingText('')
+  }
+
   const handleSavePendingLine = () => {
     if (!pendingRegion) return
     const text = pendingText.trim()
@@ -382,7 +505,10 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       id: newLineId,
       content: text,
       color: 'rgba(255, 255, 255, 0.12)',
+      drag: false,
+      resize: true,
     })
+    attachRegionContextMenu(pendingRegion.region)
 
     const newLine: DialogueLine = {
       id: newLineId,
@@ -409,18 +535,36 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   const handleDeleteLine = (id: string) => {
     setLines((prev) => prev.filter((l) => l.id !== id))
     const regions = wsRegionsRef.current?.getRegions() || []
-    const target = regions.find((r) => r.id === id)
+    const target = regions.find((r: any) => r.id === id)
     if (target) target.remove()
+    if (playingLineId === id) {
+      videoRef.current?.pause()
+      wsRef.current?.pause()
+      setPlayingLineId(null)
+      playingLineRef.current = null
+      setIsPlaying(false)
+    }
+    if (editingModalLine?.id === id) {
+      setEditingModalLine(null)
+      setEditingText('')
+    }
+    if (editingLineId === id) {
+      setEditingLineId(null)
+      setEditingText('')
+    }
   }
 
   const handleSaveEditedText = (id: string) => {
-    setLines((prev) =>
-      prev.map((l) => (l.id === id ? { ...l, text: editingText.trim() || l.text } : l))
-    )
-    const regions = wsRegionsRef.current?.getRegions() || []
-    const target = regions.find((r) => r.id === id)
-    if (target && editingText.trim()) {
-      target.setOptions({ content: editingText.trim() })
+    const text = editingText.trim()
+    if (text) {
+      setLines((prev) =>
+        prev.map((l) => (l.id === id ? { ...l, text } : l))
+      )
+      const regions = wsRegionsRef.current?.getRegions() || []
+      const target = regions.find((r: any) => r.id === id)
+      if (target) {
+        target.setOptions({ content: text })
+      }
     }
     setEditingLineId(null)
     setEditingText('')
@@ -545,7 +689,11 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
                     <span>Processando waveform...</span>
                   </div>
                 )}
-                <div ref={waveformContainerRef} className="w-full" />
+                <div
+                  ref={waveformContainerRef}
+                  className="w-full"
+                  onContextMenu={handleWaveformContextMenu}
+                />
                 <div ref={timelineContainerRef} className="w-full bg-black/40" />
               </div>
 
@@ -573,13 +721,59 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
                     />
                     <button
                       onClick={handleSavePendingLine}
-                      className="px-2.5 py-1 bg-white text-black hover:bg-zinc-200 text-xs font-medium rounded"
+                      className="px-2.5 py-1 bg-white text-black hover:bg-zinc-200 text-xs font-medium rounded cursor-pointer"
                     >
                       Salvar
                     </button>
                     <button
                       onClick={handleCancelPendingLine}
-                      className="px-2 py-1 text-zinc-400 hover:text-white text-xs rounded"
+                      className="px-2 py-1 text-zinc-400 hover:text-white text-xs rounded cursor-pointer"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Prompt for editing existing dialogue line */}
+              {editingModalLine && (
+                <div className="absolute inset-x-3 top-2 z-20 bg-black/95 border border-zinc-700 rounded p-2.5 shadow-xl animate-in fade-in duration-100 backdrop-blur-sm">
+                  <div className="flex items-center justify-between mb-1.5 text-[11px]">
+                    <div className="flex items-center gap-2">
+                      <span className="text-zinc-200 font-medium">Editar Fala:</span>
+                      <span className="font-mono text-zinc-400">
+                        {formatTime(editingModalLine.startTime)} ➔ {formatTime(editingModalLine.endTime)}
+                      </span>
+                    </div>
+                    <button
+                      onClick={handleCancelModalEdit}
+                      className="text-zinc-500 hover:text-white text-xs px-1 cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <input
+                      ref={editInputRef}
+                      type="text"
+                      value={editingText}
+                      onChange={(e) => setEditingText(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') handleSaveModalEdit()
+                        if (e.key === 'Escape') handleCancelModalEdit()
+                      }}
+                      placeholder="Texto da fala... (Pressione ENTER)"
+                      className="flex-1 bg-[#09090b] border border-zinc-800 rounded px-2.5 py-1 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
+                    />
+                    <button
+                      onClick={handleSaveModalEdit}
+                      className="px-2.5 py-1 bg-white text-black hover:bg-zinc-200 text-xs font-medium rounded cursor-pointer"
+                    >
+                      Salvar
+                    </button>
+                    <button
+                      onClick={handleCancelModalEdit}
+                      className="px-2 py-1 text-zinc-400 hover:text-white text-xs rounded cursor-pointer"
                     >
                       Cancelar
                     </button>
@@ -607,6 +801,15 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
                   <div
                     key={line.id}
                     onClick={() => handleSeekToLine(line)}
+                    onContextMenu={(e) => {
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setContextMenu({
+                        x: Math.min(e.clientX, window.innerWidth - 200),
+                        y: Math.min(e.clientY, window.innerHeight - 160),
+                        line,
+                      })
+                    }}
                     className={`p-2 rounded transition-colors cursor-pointer group space-y-1 ${
                       playingLineId === line.id
                         ? 'border border-zinc-500 bg-zinc-900/80 shadow-sm'
@@ -626,7 +829,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
                           e.stopPropagation()
                           handlePlayLine(line)
                         }}
-                        className={`p-1 rounded transition-colors ${
+                        className={`p-1 rounded transition-colors cursor-pointer ${
                           playingLineId === line.id
                             ? 'bg-white text-black'
                             : 'hover:bg-zinc-800 text-zinc-400 hover:text-white'
@@ -656,7 +859,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
                         />
                         <button
                           onClick={() => handleSaveEditedText(line.id)}
-                          className="px-1.5 py-0.5 bg-white text-black rounded text-[10px]"
+                          className="px-1.5 py-0.5 bg-white text-black rounded text-[10px] cursor-pointer"
                         >
                           <Check className="w-3 h-3" />
                         </button>
@@ -673,10 +876,10 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
-                            setEditingLineId(line.id)
-                            setEditingText(line.text)
+                            handleStartEdit(line)
                           }}
-                          className="hover:text-white"
+                          className="hover:text-white cursor-pointer"
+                          title="Editar fala"
                         >
                           <Edit2 className="w-3 h-3" />
                         </button>
@@ -685,7 +888,8 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
                             e.stopPropagation()
                             handleDeleteLine(line.id)
                           }}
-                          className="hover:text-red-400"
+                          className="hover:text-red-400 cursor-pointer"
+                          title="Excluir fala"
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
@@ -703,7 +907,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
                 disabled={lines.length === 0}
                 className={`w-full py-2 px-3 rounded text-xs font-medium flex items-center justify-center gap-1.5 transition-all ${
                   lines.length > 0
-                    ? 'bg-white hover:bg-zinc-200 text-black'
+                    ? 'bg-white hover:bg-zinc-200 text-black cursor-pointer'
                     : 'bg-zinc-900 text-zinc-600 cursor-not-allowed'
                 }`}
               >
@@ -712,6 +916,57 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Right-click Context Menu */}
+      {contextMenu && (
+        <div
+          className="fixed z-50 bg-[#121215] border border-zinc-700/80 rounded-lg shadow-2xl py-1 w-48 text-xs select-none backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
+          style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="px-3 py-1.5 border-b border-zinc-800 text-[10px] text-zinc-400 font-mono flex items-center justify-between">
+            <span>Fala #{lines.findIndex((l) => l.id === contextMenu.line.id) + 1}</span>
+            <span>{formatTime(contextMenu.line.startTime)}</span>
+          </div>
+
+          <button
+            onClick={() => {
+              const line = contextMenu.line
+              setContextMenu(null)
+              handlePlayLine(line)
+            }}
+            className="w-full px-3 py-2 text-left hover:bg-zinc-800/80 text-zinc-200 hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
+          >
+            <Play className="w-3.5 h-3.5 text-zinc-400" />
+            <span>Ouvir Trecho</span>
+          </button>
+
+          <button
+            onClick={() => {
+              const line = contextMenu.line
+              handleStartEdit(line)
+            }}
+            className="w-full px-3 py-2 text-left hover:bg-zinc-800/80 text-zinc-200 hover:text-white flex items-center gap-2 transition-colors cursor-pointer"
+          >
+            <Edit2 className="w-3.5 h-3.5 text-zinc-400" />
+            <span>Editar Fala</span>
+          </button>
+
+          <div className="my-1 border-t border-zinc-800" />
+
+          <button
+            onClick={() => {
+              const id = contextMenu.line.id
+              setContextMenu(null)
+              handleDeleteLine(id)
+            }}
+            className="w-full px-3 py-2 text-left hover:bg-red-500/20 text-red-400 hover:text-red-300 flex items-center gap-2 transition-colors cursor-pointer"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-red-400" />
+            <span>Excluir Fala</span>
+          </button>
         </div>
       )}
     </div>
