@@ -1,6 +1,6 @@
 import React from 'react'
 import { AppStep } from '../types'
-import { Mic, Film, Sliders, Volume2, Settings, Scissors } from 'lucide-react'
+import { Settings, Film } from 'lucide-react'
 
 interface NavbarProps {
   currentStep: AppStep
@@ -20,39 +20,36 @@ export const Navbar: React.FC<NavbarProps> = ({
   onOpenSettings,
 }) => {
   return (
-    <header className="h-14 bg-zinc-900/90 border-b border-zinc-800 px-4 flex items-center justify-between backdrop-blur-md select-none">
-      {/* Logo & Brand */}
+    <header className="h-12 bg-black border-b border-zinc-900 px-4 flex items-center justify-between select-none">
+      {/* Brand & Video info */}
       <div className="flex items-center gap-3">
-        <div className="flex items-center gap-2 bg-gradient-to-r from-violet-600 to-indigo-600 px-3 py-1.5 rounded-lg shadow-md shadow-violet-950/50">
-          <Mic className="w-4 h-4 text-white animate-pulse" />
-          <span className="font-black text-sm tracking-wider text-white">DubDT</span>
+        <div className="flex items-center gap-2">
+          <span className="w-2 h-2 rounded-full bg-white" />
+          <span className="font-semibold text-xs tracking-wider text-white uppercase">DubDT</span>
         </div>
 
-        {videoName ? (
-          <div className="flex items-center gap-1.5 text-xs text-zinc-400 bg-zinc-800/80 px-2.5 py-1 rounded-md border border-zinc-700/50 max-w-[280px] truncate">
-            <Film className="w-3.5 h-3.5 text-violet-400 shrink-0" />
-            <span className="truncate font-medium text-zinc-300">{videoName}</span>
+        {videoName && (
+          <div className="flex items-center gap-1.5 text-xs text-zinc-400 pl-3 border-l border-zinc-900 max-w-[260px] truncate">
+            <Film className="w-3 h-3 text-zinc-500 shrink-0" />
+            <span className="truncate text-zinc-400 font-mono text-[11px]">{videoName}</span>
           </div>
-        ) : (
-          <span className="text-xs text-zinc-500 italic">Nenhum vídeo aberto</span>
         )}
       </div>
 
-      {/* Stepper Navigation */}
-      <nav className="flex items-center gap-1 bg-zinc-950/80 p-1 rounded-xl border border-zinc-800 shadow-inner">
+      {/* Minimal Stepper Navigation */}
+      <nav className="flex items-center gap-1 bg-zinc-950 p-0.5 rounded-md border border-zinc-900">
         <button
           onClick={() => setCurrentStep('annotate')}
-          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs transition-all ${
             currentStep === 'annotate'
-              ? 'bg-violet-600 text-white shadow-sm shadow-violet-700/50'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+              ? 'bg-zinc-800 text-white font-medium'
+              : 'text-zinc-500 hover:text-zinc-300'
           }`}
         >
-          <Scissors className="w-3.5 h-3.5" />
-          <span>1. Timestamps & Waveform</span>
+          <span>1. Timestamps</span>
           {linesCount > 0 && (
-            <span className="bg-zinc-900/80 text-violet-300 px-1.5 py-0.5 rounded-full text-[10px]">
-              {linesCount}
+            <span className="text-[10px] font-mono text-zinc-400">
+              ({linesCount})
             </span>
           )}
         </button>
@@ -60,19 +57,19 @@ export const Navbar: React.FC<NavbarProps> = ({
         <button
           onClick={() => setCurrentStep('record')}
           disabled={linesCount === 0}
-          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs transition-all ${
             currentStep === 'record'
-              ? 'bg-red-600 text-white shadow-sm shadow-red-700/50'
+              ? 'bg-zinc-800 text-white font-medium'
               : linesCount === 0
-              ? 'text-zinc-600 cursor-not-allowed opacity-50'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+              ? 'text-zinc-700 cursor-not-allowed'
+              : 'text-zinc-500 hover:text-zinc-300'
           }`}
         >
-          <Mic className="w-3.5 h-3.5" />
-          <span>2. Estúdio de Gravação</span>
+          <span className={currentStep === 'record' ? 'text-red-400' : ''}>●</span>
+          <span>2. Gravação</span>
           {linesCount > 0 && (
-            <span className="bg-zinc-900/80 text-zinc-300 px-1.5 py-0.5 rounded-full text-[10px]">
-              {recordedLinesCount}/{linesCount}
+            <span className="text-[10px] font-mono text-zinc-400">
+              ({recordedLinesCount}/{linesCount})
             </span>
           )}
         </button>
@@ -80,27 +77,26 @@ export const Navbar: React.FC<NavbarProps> = ({
         <button
           onClick={() => setCurrentStep('export')}
           disabled={linesCount === 0}
-          className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+          className={`flex items-center gap-1.5 px-3 py-1 rounded text-xs transition-all ${
             currentStep === 'export'
-              ? 'bg-indigo-600 text-white shadow-sm shadow-indigo-700/50'
+              ? 'bg-zinc-800 text-white font-medium'
               : linesCount === 0
-              ? 'text-zinc-600 cursor-not-allowed opacity-50'
-              : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50'
+              ? 'text-zinc-700 cursor-not-allowed'
+              : 'text-zinc-500 hover:text-zinc-300'
           }`}
         >
-          <Sliders className="w-3.5 h-3.5" />
-          <span>3. Mixagem & Export</span>
+          <span>3. Mix & Export</span>
         </button>
       </nav>
 
-      {/* Right Actions */}
+      {/* Minimal Actions */}
       <div className="flex items-center gap-2">
         <button
           onClick={onOpenSettings}
-          title="Opções de Áudio & Dispositivos"
-          className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white bg-zinc-800/60 hover:bg-zinc-700/80 px-2.5 py-1.5 rounded-lg border border-zinc-700/50 transition-colors"
+          title="Configurações de Áudio"
+          className="flex items-center gap-1.5 text-xs text-zinc-400 hover:text-white px-2 py-1 rounded border border-zinc-900 hover:border-zinc-800 transition-colors"
         >
-          <Settings className="w-3.5 h-3.5 text-zinc-300" />
+          <Settings className="w-3 h-3 text-zinc-500" />
           <span>Áudio</span>
         </button>
       </div>

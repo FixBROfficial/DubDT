@@ -11,13 +11,8 @@ import {
   Edit2,
   Check,
   ChevronRight,
-  Info,
-  Clock,
-  Sparkles,
-  Volume2,
   ZoomIn,
   ZoomOut,
-  Keyboard,
 } from 'lucide-react'
 
 interface Step1AnnotationProps {
@@ -80,7 +75,6 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
 
     setIsLoadingAudio(true)
 
-    // Clean up previous instance
     if (wsRef.current) {
       wsRef.current.destroy()
       wsRef.current = null
@@ -91,11 +85,11 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
 
     const ws = WaveSurfer.create({
       container: waveformContainerRef.current,
-      waveColor: '#4f46e5',
-      progressColor: '#9333ea',
-      cursorColor: '#f43f5e',
-      cursorWidth: 2,
-      height: 100,
+      waveColor: '#3f3f46',
+      progressColor: '#e4e4e7',
+      cursorColor: '#ffffff',
+      cursorWidth: 1,
+      height: 90,
       minPxPerSec: zoomLevel,
       autoScroll: true,
       autoCenter: true,
@@ -105,10 +99,10 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
           ? [
               TimelinePlugin.create({
                 container: timelineContainerRef.current,
-                height: 20,
+                height: 18,
                 timeInterval: 1,
                 primaryLabelInterval: 5,
-                style: { fontSize: '10px', color: '#71717a' },
+                style: { fontSize: '9px', color: '#52525b' },
               }),
             ]
           : []),
@@ -117,7 +111,6 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
 
     wsRef.current = ws
 
-    // Load extracted audio if available through electronAPI or directly mediaUrl
     const loadAudioSource = async () => {
       try {
         if (window.electronAPI && videoPath) {
@@ -127,7 +120,6 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
           ws.load(videoMediaUrl)
         }
       } catch (err) {
-        console.warn('Fallback to direct videoMediaUrl for waveform:', err)
         ws.load(videoMediaUrl)
       }
     }
@@ -137,21 +129,19 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       setIsLoadingAudio(false)
       setDuration(ws.getDuration())
 
-      // Render existing lines as regions
       lines.forEach((l) => {
         wsRegions.addRegion({
           id: l.id,
           start: l.startTime,
           end: l.endTime,
           content: l.text,
-          color: 'rgba(124, 58, 237, 0.25)',
+          color: 'rgba(255, 255, 255, 0.12)',
           drag: true,
           resize: true,
         })
       })
     })
 
-    // Sincronização: quando clica na waveform, seek no vídeo
     ws.on('timeupdate', (time) => {
       setCurrentTime(time)
       if (videoRef.current && Math.abs(videoRef.current.currentTime - time) > 0.15) {
@@ -169,9 +159,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       videoRef.current?.pause()
     })
 
-    // Evento de criação de região
     wsRegions.on('region-created', (region) => {
-      // Se não for uma região já carregada das lines
       if (!lines.some((l) => l.id === region.id)) {
         setPendingRegion({
           region,
@@ -183,7 +171,6 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       }
     })
 
-    // Quando atualiza o tamanho da região arrastando as bordas
     wsRegions.on('region-updated', (region) => {
       setLines((prev) =>
         prev.map((l) =>
@@ -192,7 +179,6 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       )
     })
 
-    // Clique na região seleciona e pula o vídeo pra lá
     wsRegions.on('region-clicked', (region, e) => {
       e.stopPropagation()
       ws.setTime(region.start)
@@ -206,14 +192,12 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     }
   }, [videoMediaUrl, videoPath])
 
-  // Zoom update
   useEffect(() => {
     if (wsRef.current) {
       wsRef.current.zoom(zoomLevel)
     }
   }, [zoomLevel])
 
-  // Ctrl Key listener to enable Drag Selection on WaveSurfer
   useEffect(() => {
     let disableDrag: (() => void) | null = null
 
@@ -221,7 +205,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       if (e.key === 'Control' && wsRegionsRef.current && !disableDrag) {
         setIsCtrlHeld(true)
         disableDrag = wsRegionsRef.current.enableDragSelection({
-          color: 'rgba(147, 51, 234, 0.35)',
+          color: 'rgba(255, 255, 255, 0.18)',
         })
       }
     }
@@ -246,7 +230,6 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     }
   }, [])
 
-  // Sincronização do vídeo com o WaveSurfer
   const handleVideoTimeUpdate = () => {
     if (videoRef.current && wsRef.current) {
       const vTime = videoRef.current.currentTime
@@ -257,7 +240,6 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     }
   }
 
-  // Toggle Play / Pause
   const togglePlay = useCallback(() => {
     if (!wsRef.current) return
     if (isPlaying) {
@@ -269,7 +251,6 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     }
   }, [isPlaying])
 
-  // Confirm new line dialogue
   const handleSavePendingLine = () => {
     if (!pendingRegion) return
     const text = pendingText.trim()
@@ -283,7 +264,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     pendingRegion.region.setOptions({
       id: newLineId,
       content: text,
-      color: 'rgba(124, 58, 237, 0.25)',
+      color: 'rgba(255, 255, 255, 0.12)',
     })
 
     const newLine: DialogueLine = {
@@ -308,7 +289,6 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     }
   }
 
-  // Delete a line
   const handleDeleteLine = (id: string) => {
     setLines((prev) => prev.filter((l) => l.id !== id))
     const regions = wsRegionsRef.current?.getRegions() || []
@@ -316,7 +296,6 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     if (target) target.remove()
   }
 
-  // Save edited line text
   const handleSaveEditedText = (id: string) => {
     setLines((prev) =>
       prev.map((l) => (l.id === id ? { ...l, text: editingText.trim() || l.text } : l))
@@ -330,75 +309,64 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     setEditingText('')
   }
 
-  // Seek to line
   const handleSeekToLine = (line: DialogueLine) => {
     if (wsRef.current) wsRef.current.setTime(line.startTime)
     if (videoRef.current) videoRef.current.currentTime = line.startTime
   }
 
   return (
-    <div className="flex-1 flex flex-col h-[calc(100vh-3.5rem)] overflow-hidden bg-zinc-950">
-      {/* If No Video Selected */}
+    <div className="flex-1 flex flex-col h-[calc(100vh-3rem)] overflow-hidden bg-[#050505]">
       {!videoMediaUrl ? (
         <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-          <div className="w-20 h-20 bg-zinc-900 border border-zinc-800 rounded-3xl flex items-center justify-center mb-6 shadow-xl shadow-purple-950/20 group hover:border-violet-500/50 transition-all">
-            <Upload className="w-10 h-10 text-violet-400 group-hover:scale-110 transition-transform" />
+          <div className="w-12 h-12 border border-zinc-800 rounded-md flex items-center justify-center mb-4 text-zinc-400">
+            <Upload className="w-5 h-5" />
           </div>
-          <h2 className="text-xl font-bold text-white mb-2">Selecione o vídeo que você deseja dublar</h2>
-          <p className="text-sm text-zinc-400 max-w-md mb-6 leading-relaxed">
-            Abra qualquer arquivo de vídeo (MP4, MKV, WebM, AVI). O DubDT extrairá a waveform do áudio
-            para você demarcar as falas com precisão.
+          <h2 className="text-sm font-semibold text-white mb-1">Selecione o vídeo para dublagem</h2>
+          <p className="text-xs text-zinc-500 max-w-sm mb-5">
+            Formatos suportados: MP4, MKV, WebM, MOV, AVI.
           </p>
           <button
             onClick={onSelectVideo}
-            className="flex items-center gap-2.5 px-6 py-3 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white font-semibold text-sm rounded-xl shadow-lg shadow-violet-900/40 hover:shadow-violet-900/60 transition-all"
+            className="px-4 py-2 bg-white text-black hover:bg-zinc-200 text-xs font-medium rounded transition-colors"
           >
-            <Upload className="w-4 h-4" />
-            <span>Selecionar Vídeo</span>
+            Selecionar Vídeo
           </button>
         </div>
       ) : (
-        /* Workspace when video is loaded */
         <div className="flex-1 flex overflow-hidden">
-          {/* Main Area: Video Player & Waveform */}
-          <div className="flex-1 flex flex-col border-r border-zinc-800/80 overflow-hidden">
-            {/* Top Toolbar / Instructions Banner */}
-            <div className="h-10 bg-zinc-900/60 border-b border-zinc-800/80 px-4 flex items-center justify-between text-xs">
+          {/* Main Area: Video & Waveform */}
+          <div className="flex-1 flex flex-col border-r border-zinc-900 overflow-hidden">
+            {/* Minimal Toolbar */}
+            <div className="h-8 bg-black border-b border-zinc-900 px-4 flex items-center justify-between text-xs">
               <div className="flex items-center gap-3">
                 <span
-                  className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded font-mono font-medium text-[11px] transition-all ${
+                  className={`text-[11px] font-mono px-1.5 py-0.5 rounded transition-all ${
                     isCtrlHeld
-                      ? 'bg-purple-600 text-white shadow-sm shadow-purple-700/50 animate-pulse'
-                      : 'bg-zinc-800 text-zinc-400 border border-zinc-700/50'
+                      ? 'bg-white text-black font-semibold'
+                      : 'text-zinc-500'
                   }`}
                 >
-                  <Keyboard className="w-3 h-3" />
-                  {isCtrlHeld ? 'CTRL ATIVO: Arraste na waveform!' : 'Segure CTRL e arraste na Waveform'}
-                </span>
-                <span className="text-zinc-500 hidden sm:inline">
-                  Marque o início e o fim da fala de cada personagem
+                  {isCtrlHeld ? 'CTRL ATIVO: Selecione na waveform' : 'Segure CTRL e arraste na waveform'}
                 </span>
               </div>
 
               {/* Zoom Controls */}
-              <div className="flex items-center gap-2">
-                <span className="text-zinc-500 text-[11px]">Zoom:</span>
+              <div className="flex items-center gap-1">
+                <span className="text-zinc-600 text-[10px] mr-1">Zoom:</span>
                 <button
                   onClick={() => setZoomLevel((z) => Math.max(10, z - 10))}
-                  title="Diminuir Zoom"
-                  className="p-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded"
+                  className="p-1 hover:text-white text-zinc-500 rounded"
                 >
-                  <ZoomOut className="w-3.5 h-3.5" />
+                  <ZoomOut className="w-3 h-3" />
                 </button>
-                <span className="font-mono text-zinc-400 text-[11px] min-w-[28px] text-center">
-                  {zoomLevel}x
+                <span className="font-mono text-zinc-400 text-[10px] min-w-[24px] text-center">
+                  {zoomLevel}
                 </span>
                 <button
                   onClick={() => setZoomLevel((z) => Math.min(150, z + 10))}
-                  title="Aumentar Zoom"
-                  className="p-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded"
+                  className="p-1 hover:text-white text-zinc-500 rounded"
                 >
-                  <ZoomIn className="w-3.5 h-3.5" />
+                  <ZoomIn className="w-3 h-3" />
                 </button>
               </div>
             </div>
@@ -410,65 +378,57 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
                 src={videoMediaUrl}
                 onTimeUpdate={handleVideoTimeUpdate}
                 onClick={togglePlay}
-                className="max-h-full max-w-full rounded-lg shadow-2xl object-contain cursor-pointer"
+                className="max-h-full max-w-full rounded object-contain cursor-pointer"
               />
 
-              {/* Time Code Overlay */}
-              <div className="absolute top-4 left-4 bg-zinc-950/80 backdrop-blur-md px-3 py-1 rounded-md border border-zinc-800/80 text-xs font-mono text-zinc-300">
-                <span className="text-violet-400 font-bold">{formatTime(currentTime)}</span> /{' '}
+              {/* Time Code */}
+              <div className="absolute top-3 left-3 bg-black/80 px-2 py-0.5 rounded border border-zinc-900 text-[11px] font-mono text-zinc-400">
+                <span className="text-white">{formatTime(currentTime)}</span> /{' '}
                 <span>{formatTime(duration)}</span>
               </div>
             </div>
 
-            {/* Waveform & Timeline Section */}
-            <div className="bg-zinc-900 border-t border-zinc-800 p-4 space-y-2 select-none relative">
-              {/* Playback Controls & Waveform Header */}
+            {/* Minimal Waveform Area */}
+            <div className="bg-black border-t border-zinc-900 p-3 space-y-2 select-none relative">
               <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2">
                   <button
                     onClick={togglePlay}
-                    className="p-2.5 bg-violet-600 hover:bg-violet-500 text-white rounded-full shadow-md transition-transform active:scale-95"
+                    className="p-1.5 bg-zinc-900 hover:bg-zinc-800 text-white rounded transition-colors"
                   >
-                    {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4 ml-0.5" />}
+                    {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 ml-0.5" />}
                   </button>
-                  <div className="text-xs font-mono">
-                    <span className="text-white font-bold">{formatTime(currentTime)}</span>
-                    <span className="text-zinc-500"> / {formatTime(duration)}</span>
-                  </div>
+                  <span className="text-[11px] font-mono text-zinc-400">
+                    <span className="text-white">{formatTime(currentTime)}</span> / {formatTime(duration)}
+                  </span>
                 </div>
 
-                <div className="flex items-center gap-2 text-xs text-zinc-400">
-                  <span className="inline-block w-2.5 h-2.5 rounded-full bg-violet-500/80" />
-                  <span>Falas cadastradas: {lines.length}</span>
-                </div>
+                <span className="text-[11px] text-zinc-500 font-mono">
+                  {lines.length} falas
+                </span>
               </div>
 
-              {/* Waveform Display Container */}
-              <div className="relative rounded-lg bg-zinc-950 border border-zinc-800 overflow-hidden">
+              {/* Waveform Container */}
+              <div className="relative rounded bg-[#09090b] border border-zinc-900 overflow-hidden">
                 {isLoadingAudio && (
-                  <div className="absolute inset-0 bg-zinc-950/80 backdrop-blur-sm flex items-center justify-center z-10 gap-2 text-xs text-violet-400">
-                    <div className="w-4 h-4 border-2 border-violet-500 border-t-transparent rounded-full animate-spin" />
-                    <span>Extraindo áudio do vídeo para Waveform...</span>
+                  <div className="absolute inset-0 bg-black/80 flex items-center justify-center z-10 text-xs text-zinc-400">
+                    <span>Processando áudio para waveform...</span>
                   </div>
                 )}
                 <div ref={waveformContainerRef} className="w-full" />
-                <div ref={timelineContainerRef} className="w-full bg-zinc-900/50" />
+                <div ref={timelineContainerRef} className="w-full bg-black/40" />
               </div>
 
-              {/* Modal / Popup for typing speech when region is created with CTRL */}
+              {/* Prompt for typing dialogue line */}
               {pendingRegion && (
-                <div className="absolute inset-x-4 top-2 z-20 bg-zinc-900/95 backdrop-blur-md border border-violet-500/50 rounded-xl p-3 shadow-2xl shadow-violet-950/50 animate-in fade-in slide-in-from-top-2 duration-150">
-                  <div className="flex items-center justify-between mb-2">
-                    <div className="flex items-center gap-2 text-xs text-violet-300 font-semibold">
-                      <Sparkles className="w-3.5 h-3.5" />
-                      <span>Nova Fala Selecionada</span>
-                    </div>
-                    <div className="text-[11px] font-mono text-zinc-400 bg-zinc-800/80 px-2 py-0.5 rounded">
-                      {formatTime(pendingRegion.start)} ➔ {formatTime(pendingRegion.end)} (
-                      {(pendingRegion.end - pendingRegion.start).toFixed(2)}s)
-                    </div>
+                <div className="absolute inset-x-3 top-2 z-20 bg-black border border-zinc-700 rounded p-2.5 shadow-xl animate-in fade-in duration-100">
+                  <div className="flex items-center justify-between mb-1.5 text-[11px]">
+                    <span className="text-zinc-300 font-medium">Nova Fala:</span>
+                    <span className="font-mono text-zinc-500">
+                      {formatTime(pendingRegion.start)} ➔ {formatTime(pendingRegion.end)}
+                    </span>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex gap-1.5">
                     <input
                       ref={inputRef}
                       type="text"
@@ -478,19 +438,18 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
                         if (e.key === 'Enter') handleSavePendingLine()
                         if (e.key === 'Escape') handleCancelPendingLine()
                       }}
-                      placeholder='Ex: "Estou pronto!" (Pressione ENTER para salvar)'
-                      className="flex-1 bg-zinc-950 border border-violet-500/50 rounded-lg px-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:ring-1 focus:ring-violet-500"
+                      placeholder='Texto da fala... (Pressione ENTER)'
+                      className="flex-1 bg-[#09090b] border border-zinc-800 rounded px-2.5 py-1 text-xs text-white placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
                     />
                     <button
                       onClick={handleSavePendingLine}
-                      className="px-3 py-1.5 bg-violet-600 hover:bg-violet-500 text-white text-xs font-semibold rounded-lg flex items-center gap-1 shadow"
+                      className="px-2.5 py-1 bg-white text-black hover:bg-zinc-200 text-xs font-medium rounded"
                     >
-                      <Check className="w-3.5 h-3.5" />
                       Salvar
                     </button>
                     <button
                       onClick={handleCancelPendingLine}
-                      className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold rounded-lg"
+                      className="px-2 py-1 text-zinc-400 hover:text-white text-xs rounded"
                     >
                       Cancelar
                     </button>
@@ -500,42 +459,29 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
             </div>
           </div>
 
-          {/* Right Sidebar: Lines List & Advance */}
-          <div className="w-80 bg-zinc-900 flex flex-col justify-between overflow-hidden">
-            {/* Sidebar Header */}
-            <div className="p-3.5 border-b border-zinc-800 bg-zinc-950/40 flex items-center justify-between">
-              <div>
-                <h3 className="text-xs font-bold text-white flex items-center gap-1.5">
-                  <Clock className="w-3.5 h-3.5 text-violet-400" />
-                  Roteiro de Falas
-                </h3>
-                <p className="text-[11px] text-zinc-400">{lines.length} falas marcadas</p>
-              </div>
+          {/* Right Sidebar: Lines List */}
+          <div className="w-72 bg-black flex flex-col justify-between overflow-hidden">
+            <div className="p-3 border-b border-zinc-900 flex items-center justify-between">
+              <span className="text-xs font-medium text-white uppercase tracking-wider">Roteiro</span>
+              <span className="text-[11px] font-mono text-zinc-500">{lines.length} falas</span>
             </div>
 
-            {/* Lines List */}
-            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+            {/* List */}
+            <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
               {lines.length === 0 ? (
-                <div className="text-center py-10 px-4">
-                  <div className="w-10 h-10 rounded-full bg-zinc-800/80 flex items-center justify-center mx-auto mb-3 text-zinc-500">
-                    <Info className="w-5 h-5" />
-                  </div>
-                  <p className="text-xs text-zinc-400 font-medium mb-1">Nenhuma fala marcada ainda</p>
-                  <p className="text-[11px] text-zinc-500 leading-relaxed">
-                    Segure <kbd className="bg-zinc-800 px-1 py-0.5 rounded text-zinc-300 font-mono">CTRL</kbd> e
-                    arraste o mouse sobre a waveform para marcar a primeira fala.
-                  </p>
+                <div className="text-center py-10 px-3 text-zinc-600 text-xs">
+                  Segure CTRL e arraste na waveform para marcar uma fala.
                 </div>
               ) : (
                 lines.map((line, index) => (
                   <div
                     key={line.id}
                     onClick={() => handleSeekToLine(line)}
-                    className="p-2.5 rounded-xl bg-zinc-950/60 border border-zinc-800/80 hover:border-violet-500/40 transition-all cursor-pointer group space-y-1.5"
+                    className="p-2 rounded bg-[#09090b] border border-zinc-900 hover:border-zinc-800 transition-colors cursor-pointer group space-y-1"
                   >
-                    <div className="flex items-center justify-between text-[11px]">
-                      <span className="font-bold text-violet-400">#{index + 1}</span>
-                      <span className="font-mono text-zinc-400 text-[10px]">
+                    <div className="flex items-center justify-between text-[10px]">
+                      <span className="font-mono text-zinc-500 font-bold">#{index + 1}</span>
+                      <span className="font-mono text-zinc-600">
                         {formatTime(line.startTime)} - {formatTime(line.endTime)}
                       </span>
                     </div>
@@ -550,33 +496,32 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
                             if (e.key === 'Enter') handleSaveEditedText(line.id)
                             if (e.key === 'Escape') setEditingLineId(null)
                           }}
-                          className="flex-1 bg-zinc-900 border border-violet-500 rounded px-2 py-1 text-xs text-white"
+                          className="flex-1 bg-black border border-zinc-700 rounded px-1.5 py-0.5 text-xs text-white"
                           autoFocus
                         />
                         <button
                           onClick={() => handleSaveEditedText(line.id)}
-                          className="p-1 bg-violet-600 rounded text-white"
+                          className="px-1.5 py-0.5 bg-white text-black rounded text-[10px]"
                         >
-                          <Check className="w-3.5 h-3.5" />
+                          <Check className="w-3 h-3" />
                         </button>
                       </div>
                     ) : (
-                      <p className="text-xs text-zinc-200 font-medium italic break-words">
+                      <p className="text-xs text-zinc-300 font-normal break-words">
                         "{line.text}"
                       </p>
                     )}
 
-                    <div className="flex items-center justify-between pt-1 border-t border-zinc-900 text-[10px] text-zinc-500">
-                      <span>{(line.endTime - line.startTime).toFixed(2)}s de fala</span>
-                      <div className="flex items-center gap-1 opacity-80 group-hover:opacity-100">
+                    <div className="flex items-center justify-between pt-0.5 text-[10px] text-zinc-600">
+                      <span>{(line.endTime - line.startTime).toFixed(2)}s</span>
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                         <button
                           onClick={(e) => {
                             e.stopPropagation()
                             setEditingLineId(line.id)
                             setEditingText(line.text)
                           }}
-                          title="Editar texto"
-                          className="p-1 hover:text-white transition-colors"
+                          className="hover:text-white"
                         >
                           <Edit2 className="w-3 h-3" />
                         </button>
@@ -585,8 +530,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
                             e.stopPropagation()
                             handleDeleteLine(line.id)
                           }}
-                          title="Remover fala"
-                          className="p-1 hover:text-red-400 transition-colors"
+                          className="hover:text-red-400"
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
@@ -597,19 +541,19 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
               )}
             </div>
 
-            {/* Sidebar Bottom / Advance button */}
-            <div className="p-3 border-t border-zinc-800 bg-zinc-950/70">
+            {/* Advance Button */}
+            <div className="p-2.5 border-t border-zinc-900 bg-black">
               <button
                 onClick={onAdvanceToRecording}
                 disabled={lines.length === 0}
-                className={`w-full py-2.5 px-4 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all ${
+                className={`w-full py-2 px-3 rounded text-xs font-medium flex items-center justify-center gap-1.5 transition-all ${
                   lines.length > 0
-                    ? 'bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white shadow-lg shadow-violet-950/50'
-                    : 'bg-zinc-800 text-zinc-500 cursor-not-allowed opacity-50'
+                    ? 'bg-white hover:bg-zinc-200 text-black'
+                    : 'bg-zinc-900 text-zinc-600 cursor-not-allowed'
                 }`}
               >
                 <span>Avançar para Gravação</span>
-                <ChevronRight className="w-4 h-4" />
+                <ChevronRight className="w-3.5 h-3.5" />
               </button>
             </div>
           </div>

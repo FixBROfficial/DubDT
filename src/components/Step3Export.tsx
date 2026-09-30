@@ -1,20 +1,14 @@
 import React, { useState } from 'react'
 import { DialogueLine, ExportSettings, VoiceEffectPreset } from '../types'
 import {
-  Sliders,
-  Film,
-  Music,
-  Mic,
   Upload,
   Folder,
-  Download,
   CheckCircle,
   AlertCircle,
   FileText,
+  Film,
+  Music,
   Scissors,
-  Sparkles,
-  Volume2,
-  VolumeX,
 } from 'lucide-react'
 
 interface Step3ExportProps {
@@ -35,10 +29,8 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
   const [exportSuccessMessage, setExportSuccessMessage] = useState<string | null>(null)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
 
-  // Count recorded takes
   const recordedLinesCount = lines.filter((l) => l.takes && l.takes.length > 0).length
 
-  // Select custom M&E Audio
   const handleSelectCustomAudio = async () => {
     if (!window.electronAPI) return
     const result = await window.electronAPI.selectAudioFile()
@@ -46,12 +38,11 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
       setExportSettings((prev) => ({
         ...prev,
         customBgAudioPath: result.path,
-        includeOriginalAudio: false, // Automatically prefer M&E when uploaded
+        includeOriginalAudio: false,
       }))
     }
   }
 
-  // Select Output Directory
   const handleSelectOutputDir = async () => {
     if (!window.electronAPI) return
     const dir = await window.electronAPI.selectDirectory()
@@ -60,11 +51,10 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
     }
   }
 
-  // 1. Export Full Video (.mp4)
   const handleExportFullVideo = async () => {
     if (!window.electronAPI || !videoPath) return
     setIsExporting(true)
-    setExportProgressText('Renderizando e mixando o vídeo completo com FFmpeg...')
+    setExportProgressText('Renderizando vídeo com FFmpeg...')
     setExportSuccessMessage(null)
     setErrorMessage(null)
 
@@ -94,7 +84,7 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
         lines,
       })
 
-      setExportSuccessMessage(`Vídeo dublado exportado com sucesso em: ${savePath}`)
+      setExportSuccessMessage(`Vídeo exportado com sucesso: ${savePath}`)
     } catch (err: any) {
       setErrorMessage(err?.message || 'Falha ao exportar vídeo.')
     } finally {
@@ -102,16 +92,15 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
     }
   }
 
-  // 2. Export Full Audio (.wav or .mp3)
   const handleExportFullAudio = async () => {
     if (!window.electronAPI || !videoPath) return
     setIsExporting(true)
-    setExportProgressText('Mixando faixas de áudio com FFmpeg...')
+    setExportProgressText('Mixando faixas de áudio...')
     setExportSuccessMessage(null)
     setErrorMessage(null)
 
     try {
-      const defaultName = `DubDT_AudioMix_${Date.now()}.wav`
+      const defaultName = `DubDT_Audio_${Date.now()}.wav`
       const savePath = await window.electronAPI.saveFileDialog({
         title: 'Salvar Áudio Mixado',
         defaultPath: defaultName,
@@ -139,7 +128,7 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
         lines,
       })
 
-      setExportSuccessMessage(`Áudio mixado exportado com sucesso em: ${savePath}`)
+      setExportSuccessMessage(`Áudio exportado com sucesso: ${savePath}`)
     } catch (err: any) {
       setErrorMessage(err?.message || 'Falha ao exportar áudio.')
     } finally {
@@ -147,11 +136,10 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
     }
   }
 
-  // 3. Export Individual Clips (Batch)
   const handleExportClips = async () => {
     if (!window.electronAPI || !videoPath) return
     setIsExporting(true)
-    setExportProgressText('Cortando e exportando clipes individuais...')
+    setExportProgressText('Exportando clipes individuais...')
     setExportSuccessMessage(null)
     setErrorMessage(null)
 
@@ -177,7 +165,7 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
       })
 
       setExportSuccessMessage(
-        `${res.count} clipes (${exportSettings.clipFormat === 'video' ? 'vídeos' : 'áudios'}) exportados para: ${targetDir}`
+        `${res.count} clipes (${exportSettings.clipFormat}) exportados em: ${targetDir}`
       )
     } catch (err: any) {
       setErrorMessage(err?.message || 'Falha ao exportar clipes.')
@@ -186,13 +174,12 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
     }
   }
 
-  // 4. Export Dialogue Script as .txt
   const handleExportTxt = async () => {
     if (!window.electronAPI) return
     try {
       const defaultName = `Roteiro_DubDT_${Date.now()}.txt`
       const savePath = await window.electronAPI.saveFileDialog({
-        title: 'Salvar Roteiro de Falas (.txt)',
+        title: 'Salvar Roteiro (.txt)',
         defaultPath: defaultName,
         filters: [{ name: 'Arquivo de Texto', extensions: ['txt'] }],
       })
@@ -200,428 +187,317 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
       if (!savePath) return
 
       await window.electronAPI.exportScriptTxt(savePath, lines)
-      setExportSuccessMessage(`Roteiro .txt salvo com sucesso em: ${savePath}`)
+      setExportSuccessMessage(`Roteiro .txt salvo: ${savePath}`)
     } catch (err: any) {
       setErrorMessage(err?.message || 'Falha ao exportar roteiro .txt')
     }
   }
 
-  const voicePresets: { id: VoiceEffectPreset; label: string; desc: string; icon: string }[] = [
-    { id: 'clean', label: 'Natural / Clean', desc: 'Sem filtros adicionais', icon: '🎙️' },
-    { id: 'loudnorm', label: 'Normalizador', desc: 'Volume equilibrado broadcast (EBU R128)', icon: '⚡' },
-    { id: 'radio', label: 'Rádio / Telefone', desc: 'Filtro passa-alta e passa-baixa', icon: '📻' },
-    { id: 'reverb', label: 'Eco / Pensamento', desc: 'Reverberação espacial', icon: '🌌' },
+  const voicePresets: { id: VoiceEffectPreset; label: string; desc: string }[] = [
+    { id: 'clean', label: 'Natural', desc: 'Som original' },
+    { id: 'loudnorm', label: 'Normalizador', desc: 'EBU R128 Broadcast' },
+    { id: 'radio', label: 'Rádio/Tel', desc: 'Filtro passa-banda' },
+    { id: 'reverb', label: 'Eco/Reverb', desc: 'Efeito espacial' },
   ]
 
   return (
-    <div className="flex-1 flex flex-col h-[calc(100vh-3.5rem)] overflow-y-auto bg-zinc-950 p-6">
-      <div className="max-w-5xl mx-auto w-full space-y-6">
+    <div className="flex-1 flex flex-col h-[calc(100vh-3rem)] overflow-y-auto bg-[#050505] p-5">
+      <div className="max-w-4xl mx-auto w-full space-y-4">
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
+        <div className="flex items-center justify-between border-b border-zinc-900 pb-3">
           <div>
-            <h1 className="text-xl font-bold text-white flex items-center gap-2">
-              <Sliders className="w-5 h-5 text-indigo-400" />
-              Central de Mixagem & Exportação
+            <h1 className="text-sm font-semibold text-white uppercase tracking-wider">
+              Mixagem & Exportação
             </h1>
-            <p className="text-xs text-zinc-400 mt-0.5">
-              Mixe as trilhas, aplique efeitos de voz e exporte o resultado final em alta definição.
-            </p>
+            <p className="text-xs text-zinc-500">Ajuste os canais de áudio e escolha o formato de saída</p>
           </div>
 
-          <div className="text-right">
-            <span className="text-xs text-zinc-400 block">Status das Falas:</span>
-            <span className="text-xs font-bold text-violet-400">
-              {recordedLinesCount} de {lines.length} falas gravadas
-            </span>
-          </div>
+          <span className="text-xs font-mono text-zinc-400">
+            {recordedLinesCount}/{lines.length} falas gravadas
+          </span>
         </div>
 
         {/* Feedback Messages */}
         {exportSuccessMessage && (
-          <div className="p-3.5 bg-emerald-950/50 border border-emerald-500/40 rounded-xl flex items-center gap-3 text-xs text-emerald-300 animate-in fade-in">
-            <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-            <span className="font-medium break-all">{exportSuccessMessage}</span>
+          <div className="p-2.5 bg-zinc-900 border border-zinc-700 rounded flex items-center gap-2 text-xs text-zinc-200">
+            <CheckCircle className="w-3.5 h-3.5 text-zinc-300 shrink-0" />
+            <span className="font-mono text-[11px] truncate">{exportSuccessMessage}</span>
           </div>
         )}
 
         {errorMessage && (
-          <div className="p-3.5 bg-red-950/50 border border-red-500/40 rounded-xl flex items-center gap-3 text-xs text-red-300 animate-in fade-in">
-            <AlertCircle className="w-4 h-4 text-red-400 shrink-0" />
-            <span className="font-medium">{errorMessage}</span>
+          <div className="p-2.5 bg-red-950/40 border border-red-900/60 rounded flex items-center gap-2 text-xs text-red-300">
+            <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />
+            <span className="font-mono text-[11px]">{errorMessage}</span>
           </div>
         )}
 
-        {/* Channel Mixer Board */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {/* Canal 1: Vozes Gravadas */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 flex flex-col justify-between shadow-xl">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-                <div className="flex items-center gap-2">
-                  <div className="p-2 bg-violet-600/20 text-violet-400 rounded-lg">
-                    <Mic className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                      Vozes Dubladas
-                    </h3>
-                    <span className="text-[10px] text-zinc-400">Takes gravados no DubDT</span>
-                  </div>
-                </div>
-                <span className="text-[10px] bg-violet-500/20 text-violet-300 px-2 py-0.5 rounded-full font-bold">
-                  {recordedLinesCount} falas
+        {/* Channel Strips (Mixer) */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          {/* Canal 1: Vozes */}
+          <div className="bg-[#09090b] border border-zinc-900 rounded p-4 space-y-3">
+            <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
+              <span className="text-xs font-medium text-white uppercase tracking-wider">Vozes Dubladas</span>
+              <span className="text-[10px] font-mono text-zinc-500">{recordedLinesCount} falas</span>
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-500 text-[11px]">Volume</span>
+                <span className="font-mono text-zinc-300 text-xs">
+                  {Math.round(exportSettings.recordedVoicesVolume * 100)}%
                 </span>
               </div>
+              <input
+                type="range"
+                min="0"
+                max="2"
+                step="0.05"
+                value={exportSettings.recordedVoicesVolume}
+                onChange={(e) =>
+                  setExportSettings((prev) => ({
+                    ...prev,
+                    recordedVoicesVolume: parseFloat(e.target.value),
+                  }))
+                }
+                className="w-full accent-white h-1 bg-zinc-800 rounded appearance-none cursor-pointer"
+              />
+            </div>
 
-              {/* Volume Fader */}
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs">
-                  <span className="text-zinc-400 font-medium">Volume das Falas</span>
-                  <span className="font-mono text-violet-400 font-bold">
-                    {Math.round(exportSettings.recordedVoicesVolume * 100)}%
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="2"
-                  step="0.05"
-                  value={exportSettings.recordedVoicesVolume}
-                  onChange={(e) =>
-                    setExportSettings((prev) => ({
-                      ...prev,
-                      recordedVoicesVolume: parseFloat(e.target.value),
-                    }))
-                  }
-                  className="w-full accent-violet-500 h-1.5 bg-zinc-950 rounded appearance-none cursor-pointer"
-                />
-              </div>
-
-              {/* Presets Rápidos de Efeito de Voz */}
-              <div className="space-y-2 pt-2 border-t border-zinc-800/80">
-                <label className="text-xs font-semibold text-zinc-300 flex items-center gap-1.5">
-                  <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-                  Preset de Efeito na Voz:
-                </label>
-                <div className="grid grid-cols-2 gap-2">
-                  {voicePresets.map((p) => {
-                    const active = exportSettings.voicePreset === p.id
-                    return (
-                      <button
-                        key={p.id}
-                        type="button"
-                        onClick={() =>
-                          setExportSettings((prev) => ({ ...prev, voicePreset: p.id }))
-                        }
-                        className={`p-2 rounded-xl text-left border transition-all ${
-                          active
-                            ? 'bg-violet-600/20 border-violet-500 text-white'
-                            : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:border-zinc-700'
-                        }`}
-                      >
-                        <div className="text-xs font-bold flex items-center gap-1">
-                          <span>{p.icon}</span>
-                          <span>{p.label}</span>
-                        </div>
-                        <p className="text-[10px] text-zinc-500 mt-0.5 truncate">{p.desc}</p>
-                      </button>
-                    )
-                  })}
-                </div>
+            {/* Presets */}
+            <div className="space-y-1.5 pt-2 border-t border-zinc-900">
+              <span className="text-[11px] text-zinc-500 uppercase tracking-wider block">Filtro de Voz</span>
+              <div className="grid grid-cols-2 gap-1.5">
+                {voicePresets.map((p) => {
+                  const active = exportSettings.voicePreset === p.id
+                  return (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() =>
+                        setExportSettings((prev) => ({ ...prev, voicePreset: p.id }))
+                      }
+                      className={`p-1.5 rounded text-left border transition-colors ${
+                        active
+                          ? 'border-white bg-zinc-900 text-white'
+                          : 'border-zinc-900 bg-black text-zinc-500 hover:border-zinc-800 hover:text-zinc-300'
+                      }`}
+                    >
+                      <div className="text-[11px] font-medium">{p.label}</div>
+                      <div className="text-[9px] text-zinc-500 truncate">{p.desc}</div>
+                    </button>
+                  )
+                })}
               </div>
             </div>
           </div>
 
-          {/* Canal 2: Áudio Original do Vídeo */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 flex flex-col justify-between shadow-xl">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-                <div className="flex items-center gap-2">
-                  <div className="p-2 bg-indigo-600/20 text-indigo-400 rounded-lg">
-                    <Film className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                      Áudio Original
-                    </h3>
-                    <span className="text-[10px] text-zinc-400">Trilha original do vídeo</span>
-                  </div>
-                </div>
-
-                {/* Toggle on/off */}
-                <label className="relative inline-flex items-center cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={exportSettings.includeOriginalAudio}
-                    onChange={(e) =>
-                      setExportSettings((prev) => ({
-                        ...prev,
-                        includeOriginalAudio: e.target.checked,
-                      }))
-                    }
-                    className="sr-only peer"
-                  />
-                  <div className="w-8 h-4 bg-zinc-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-indigo-600"></div>
-                </label>
-              </div>
-
-              {/* Volume Fader */}
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs">
-                  <span className="text-zinc-400 font-medium">Volume do Som Original</span>
-                  <span className="font-mono text-indigo-400 font-bold">
-                    {exportSettings.includeOriginalAudio
-                      ? `${Math.round(exportSettings.originalAudioVolume * 100)}%`
-                      : 'MUTADO'}
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="1.5"
-                  step="0.05"
-                  disabled={!exportSettings.includeOriginalAudio}
-                  value={exportSettings.originalAudioVolume}
-                  onChange={(e) =>
-                    setExportSettings((prev) => ({
-                      ...prev,
-                      originalAudioVolume: parseFloat(e.target.value),
-                    }))
-                  }
-                  className="w-full accent-indigo-500 h-1.5 bg-zinc-950 rounded appearance-none cursor-pointer disabled:opacity-40"
-                />
-              </div>
-
-              <div className="text-[11px] text-zinc-500 leading-relaxed pt-2 border-t border-zinc-800/80">
-                Se você não tiver uma trilha instrumental separada, pode abaixar o volume do áudio
-                original para suas falas se destacarem por cima.
-              </div>
+          {/* Canal 2: Original */}
+          <div className="bg-[#09090b] border border-zinc-900 rounded p-4 space-y-3">
+            <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
+              <span className="text-xs font-medium text-white uppercase tracking-wider">Áudio Original</span>
+              <input
+                type="checkbox"
+                checked={exportSettings.includeOriginalAudio}
+                onChange={(e) =>
+                  setExportSettings((prev) => ({
+                    ...prev,
+                    includeOriginalAudio: e.target.checked,
+                  }))
+                }
+                className="accent-white h-3.5 w-3.5 rounded bg-black border border-zinc-700"
+              />
             </div>
+
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-500 text-[11px]">Volume</span>
+                <span className="font-mono text-zinc-300 text-xs">
+                  {exportSettings.includeOriginalAudio
+                    ? `${Math.round(exportSettings.originalAudioVolume * 100)}%`
+                    : 'MUTADO'}
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="1.5"
+                step="0.05"
+                disabled={!exportSettings.includeOriginalAudio}
+                value={exportSettings.originalAudioVolume}
+                onChange={(e) =>
+                  setExportSettings((prev) => ({
+                    ...prev,
+                    originalAudioVolume: parseFloat(e.target.value),
+                  }))
+                }
+                className="w-full accent-white h-1 bg-zinc-800 rounded appearance-none cursor-pointer disabled:opacity-20"
+              />
+            </div>
+
+            <p className="text-[10px] text-zinc-600 pt-2 border-t border-zinc-900 leading-normal">
+              Reduza o volume para dar clareza às suas falas caso não utilize áudio instrumental separado.
+            </p>
           </div>
 
-          {/* Canal 3: Trilha Sem Falas (M&E / Custom Audio) */}
-          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-5 flex flex-col justify-between shadow-xl">
-            <div className="space-y-4">
-              <div className="flex items-center justify-between pb-3 border-b border-zinc-800">
-                <div className="flex items-center gap-2">
-                  <div className="p-2 bg-emerald-600/20 text-emerald-400 rounded-lg">
-                    <Music className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <h3 className="text-xs font-bold text-white uppercase tracking-wider">
-                      Áudio Sem Falas (M&E)
-                    </h3>
-                    <span className="text-[10px] text-zinc-400">Trilha instrumental / Efeitos</span>
-                  </div>
-                </div>
-
-                {exportSettings.customBgAudioPath && (
-                  <button
-                    onClick={() =>
-                      setExportSettings((prev) => ({ ...prev, customBgAudioPath: null }))
-                    }
-                    className="text-[10px] text-red-400 hover:underline"
-                  >
-                    Remover
-                  </button>
-                )}
-              </div>
-
-              {/* Upload Button or Selected Audio info */}
-              {!exportSettings.customBgAudioPath ? (
+          {/* Canal 3: M&E Sem Falas */}
+          <div className="bg-[#09090b] border border-zinc-900 rounded p-4 space-y-3">
+            <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
+              <span className="text-xs font-medium text-white uppercase tracking-wider">Trilha Sem Falas (M&E)</span>
+              {exportSettings.customBgAudioPath && (
                 <button
-                  onClick={handleSelectCustomAudio}
-                  className="w-full py-3 bg-zinc-950 hover:bg-zinc-800/80 border border-dashed border-zinc-700 rounded-xl flex items-center justify-center gap-2 text-xs text-zinc-300 font-medium transition-all"
-                >
-                  <Upload className="w-4 h-4 text-emerald-400" />
-                  <span>Carregar Áudio Sem Falas</span>
-                </button>
-              ) : (
-                <div className="p-2.5 bg-zinc-950 border border-emerald-500/40 rounded-xl space-y-1">
-                  <span className="text-[10px] text-emerald-400 font-semibold uppercase">
-                    Áudio Selecionado:
-                  </span>
-                  <p className="text-xs text-white truncate font-mono">
-                    {exportSettings.customBgAudioPath.split(/[/\\]/).pop()}
-                  </p>
-                </div>
-              )}
-
-              {/* Volume Fader */}
-              <div className="space-y-1.5">
-                <div className="flex justify-between text-xs">
-                  <span className="text-zinc-400 font-medium">Volume da Trilha M&E</span>
-                  <span className="font-mono text-emerald-400 font-bold">
-                    {Math.round(exportSettings.customBgAudioVolume * 100)}%
-                  </span>
-                </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="1.5"
-                  step="0.05"
-                  disabled={!exportSettings.customBgAudioPath}
-                  value={exportSettings.customBgAudioVolume}
-                  onChange={(e) =>
-                    setExportSettings((prev) => ({
-                      ...prev,
-                      customBgAudioVolume: parseFloat(e.target.value),
-                    }))
+                  onClick={() =>
+                    setExportSettings((prev) => ({ ...prev, customBgAudioPath: null }))
                   }
-                  className="w-full accent-emerald-500 h-1.5 bg-zinc-950 rounded appearance-none cursor-pointer disabled:opacity-40"
-                />
+                  className="text-[10px] text-zinc-500 hover:text-white"
+                >
+                  Remover
+                </button>
+              )}
+            </div>
+
+            {!exportSettings.customBgAudioPath ? (
+              <button
+                onClick={handleSelectCustomAudio}
+                className="w-full py-2 bg-black hover:bg-zinc-900 border border-dashed border-zinc-800 rounded text-xs text-zinc-400 hover:text-white transition-colors"
+              >
+                + Carregar Trilha
+              </button>
+            ) : (
+              <div className="text-[11px] font-mono text-zinc-400 truncate bg-black px-2 py-1 rounded border border-zinc-900">
+                {exportSettings.customBgAudioPath.split(/[/\\]/).pop()}
               </div>
+            )}
+
+            <div className="space-y-1">
+              <div className="flex justify-between text-xs">
+                <span className="text-zinc-500 text-[11px]">Volume</span>
+                <span className="font-mono text-zinc-300 text-xs">
+                  {Math.round(exportSettings.customBgAudioVolume * 100)}%
+                </span>
+              </div>
+              <input
+                type="range"
+                min="0"
+                max="1.5"
+                step="0.05"
+                disabled={!exportSettings.customBgAudioPath}
+                value={exportSettings.customBgAudioVolume}
+                onChange={(e) =>
+                  setExportSettings((prev) => ({
+                    ...prev,
+                    customBgAudioVolume: parseFloat(e.target.value),
+                  }))
+                }
+                className="w-full accent-white h-1 bg-zinc-800 rounded appearance-none cursor-pointer disabled:opacity-20"
+              />
             </div>
           </div>
         </div>
 
-        {/* Export Actions Section */}
-        <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6 shadow-xl space-y-5">
-          <div className="flex items-center justify-between border-b border-zinc-800 pb-3">
-            <div>
-              <h2 className="text-sm font-bold text-white flex items-center gap-2">
-                <Download className="w-4 h-4 text-violet-400" />
-                Opções de Exportação
-              </h2>
-              <p className="text-xs text-zinc-400">
-                Escolha se deseja o arquivo completo ou os clipes cortados individualmente
-              </p>
-            </div>
+        {/* Export Actions Area */}
+        <div className="bg-[#09090b] border border-zinc-900 rounded p-4 space-y-4">
+          <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
+            <span className="text-xs font-medium text-white uppercase tracking-wider">Exportação</span>
 
-            {/* Folder selection */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-zinc-400 hidden sm:inline">Pasta Padrão:</span>
+            <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+              <span className="text-[11px] text-zinc-600">Pasta:</span>
               <button
                 onClick={handleSelectOutputDir}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-zinc-950 border border-zinc-800 hover:border-zinc-700 text-xs text-zinc-300 rounded-lg"
+                className="px-2 py-0.5 bg-black border border-zinc-800 hover:border-zinc-700 text-zinc-300 rounded text-[11px] font-mono truncate max-w-[180px]"
               >
-                <Folder className="w-3.5 h-3.5 text-amber-400" />
-                <span className="max-w-[200px] truncate">
-                  {exportSettings.outputDir || 'Escolher Pasta...'}
-                </span>
+                {exportSettings.outputDir ? exportSettings.outputDir.split(/[/\\]/).pop() : 'Padrão...'}
               </button>
             </div>
           </div>
 
-          {/* Export Buttons Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {/* 1. Export Full Video */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
+            {/* Full Video */}
             <button
               onClick={handleExportFullVideo}
               disabled={isExporting}
-              className="p-4 bg-gradient-to-br from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 disabled:opacity-50 text-white rounded-xl shadow-lg shadow-violet-950/50 flex flex-col items-start justify-between space-y-3 transition-all text-left group"
+              className="p-3 bg-white hover:bg-zinc-200 disabled:opacity-30 text-black rounded text-left transition-colors"
             >
-              <div className="p-2 bg-white/10 rounded-lg group-hover:scale-105 transition-transform">
-                <Film className="w-5 h-5 text-white" />
+              <div className="flex items-center gap-2">
+                <Film className="w-4 h-4" />
+                <span className="text-xs font-medium">Vídeo Completo (.mp4)</span>
               </div>
-              <div>
-                <span className="text-sm font-bold block">Exportar Vídeo Completo</span>
-                <span className="text-[11px] text-violet-200">
-                  Gera o vídeo (.mp4) com imagem e mixagem final de som
-                </span>
-              </div>
+              <p className="text-[10px] text-zinc-600 mt-1">Imagem original + mixagem final</p>
             </button>
 
-            {/* 2. Export Full Audio */}
+            {/* Full Audio */}
             <button
               onClick={handleExportFullAudio}
               disabled={isExporting}
-              className="p-4 bg-zinc-950 hover:bg-zinc-800/80 border border-zinc-800 hover:border-zinc-700 disabled:opacity-50 text-white rounded-xl shadow flex flex-col items-start justify-between space-y-3 transition-all text-left group"
+              className="p-3 bg-black hover:bg-zinc-900 border border-zinc-800 disabled:opacity-30 text-white rounded text-left transition-colors"
             >
-              <div className="p-2 bg-indigo-500/20 text-indigo-400 rounded-lg group-hover:scale-105 transition-transform">
-                <Music className="w-5 h-5" />
+              <div className="flex items-center gap-2">
+                <Music className="w-4 h-4 text-zinc-400" />
+                <span className="text-xs font-medium">Áudio Mixado (.wav)</span>
               </div>
-              <div>
-                <span className="text-sm font-bold block text-zinc-100">Exportar Áudio Completo</span>
-                <span className="text-[11px] text-zinc-400">
-                  Gera arquivo de áudio (.wav / .mp3) mixado de ponta a ponta
-                </span>
-              </div>
+              <p className="text-[10px] text-zinc-500 mt-1">Apenas as faixas sonoras combinadas</p>
             </button>
 
-            {/* 3. Export Script .txt */}
+            {/* Script .txt */}
             <button
               onClick={handleExportTxt}
               disabled={isExporting}
-              className="p-4 bg-zinc-950 hover:bg-zinc-800/80 border border-zinc-800 hover:border-zinc-700 disabled:opacity-50 text-white rounded-xl shadow flex flex-col items-start justify-between space-y-3 transition-all text-left group"
+              className="p-3 bg-black hover:bg-zinc-900 border border-zinc-800 disabled:opacity-30 text-white rounded text-left transition-colors"
             >
-              <div className="p-2 bg-amber-500/20 text-amber-400 rounded-lg group-hover:scale-105 transition-transform">
-                <FileText className="w-5 h-5" />
+              <div className="flex items-center gap-2">
+                <FileText className="w-4 h-4 text-zinc-400" />
+                <span className="text-xs font-medium">Roteiro (.txt)</span>
               </div>
-              <div>
-                <span className="text-sm font-bold block text-zinc-100">Exportar Roteiro (.txt)</span>
-                <span className="text-[11px] text-zinc-400">
-                  Gera o arquivo de texto com timestamps e falas anotadas
-                </span>
-              </div>
+              <p className="text-[10px] text-zinc-500 mt-1">Lista de timestamps e diálogos</p>
             </button>
           </div>
 
-          {/* Export Individual Clips Section */}
-          <div className="p-4 bg-zinc-950/70 border border-zinc-800/80 rounded-xl space-y-3">
-            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Scissors className="w-4 h-4 text-rose-400" />
-                <div>
-                  <h4 className="text-xs font-bold text-white">
-                    Exportar Timestamps / Clipes Separadamente
-                  </h4>
-                  <p className="text-[11px] text-zinc-400">
-                    Corta cada fala demarcada como um arquivo individual
-                  </p>
-                </div>
-              </div>
+          {/* Individual Clips */}
+          <div className="p-3 bg-black border border-zinc-900 rounded flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div>
+              <span className="text-xs font-medium text-white block">Exportar Clipes Separados</span>
+              <span className="text-[10px] text-zinc-500">Corta cada fala em um arquivo individual</span>
+            </div>
 
-              <div className="flex items-center gap-4 text-xs">
-                {/* Format selection */}
-                <div className="flex items-center gap-1.5 bg-zinc-900 px-2 py-1 rounded-lg border border-zinc-800">
-                  <span className="text-zinc-400 text-[11px]">Formato:</span>
-                  <button
-                    onClick={() =>
-                      setExportSettings((prev) => ({ ...prev, clipFormat: 'video' }))
-                    }
-                    className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all ${
-                      exportSettings.clipFormat === 'video'
-                        ? 'bg-rose-600 text-white'
-                        : 'text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    Vídeos (.mp4)
-                  </button>
-                  <button
-                    onClick={() =>
-                      setExportSettings((prev) => ({ ...prev, clipFormat: 'audio' }))
-                    }
-                    className={`px-2 py-0.5 rounded text-[11px] font-semibold transition-all ${
-                      exportSettings.clipFormat === 'audio'
-                        ? 'bg-rose-600 text-white'
-                        : 'text-zinc-400 hover:text-white'
-                    }`}
-                  >
-                    Áudios (.wav)
-                  </button>
-                </div>
-
+            <div className="flex items-center gap-2 text-xs">
+              <div className="flex bg-[#09090b] border border-zinc-800 rounded p-0.5">
                 <button
-                  onClick={handleExportClips}
-                  disabled={isExporting || recordedLinesCount === 0}
-                  className="px-4 py-2 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white text-xs font-bold rounded-lg shadow-md transition-all flex items-center gap-2"
+                  onClick={() =>
+                    setExportSettings((prev) => ({ ...prev, clipFormat: 'video' }))
+                  }
+                  className={`px-2 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                    exportSettings.clipFormat === 'video' ? 'bg-zinc-800 text-white' : 'text-zinc-500'
+                  }`}
                 >
-                  <Scissors className="w-3.5 h-3.5" />
-                  <span>Exportar Todos os Clipes</span>
+                  .mp4
+                </button>
+                <button
+                  onClick={() =>
+                    setExportSettings((prev) => ({ ...prev, clipFormat: 'audio' }))
+                  }
+                  className={`px-2 py-0.5 rounded text-[10px] font-mono transition-colors ${
+                    exportSettings.clipFormat === 'audio' ? 'bg-zinc-800 text-white' : 'text-zinc-500'
+                  }`}
+                >
+                  .wav
                 </button>
               </div>
+
+              <button
+                onClick={handleExportClips}
+                disabled={isExporting || recordedLinesCount === 0}
+                className="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-30 text-white text-xs font-medium rounded transition-colors"
+              >
+                Exportar Todos
+              </button>
             </div>
           </div>
 
-          {/* Loading overlay indicator during FFmpeg export */}
+          {/* Progress Indicator */}
           {isExporting && (
-            <div className="p-4 bg-zinc-950 border border-violet-500/50 rounded-xl flex items-center gap-3 text-xs text-violet-300">
-              <div className="w-5 h-5 border-2 border-violet-500 border-t-transparent rounded-full animate-spin shrink-0" />
-              <div className="space-y-0.5">
-                <span className="font-bold block text-white">Processando Exportação...</span>
-                <span>{exportProgressText}</span>
-              </div>
+            <div className="p-2.5 bg-black border border-zinc-800 rounded text-xs text-zinc-400 flex items-center gap-2 font-mono text-[11px]">
+              <span className="w-2 h-2 rounded-full bg-white animate-pulse" />
+              <span>{exportProgressText}</span>
             </div>
           )}
         </div>
