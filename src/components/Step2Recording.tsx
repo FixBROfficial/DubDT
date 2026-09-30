@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react'
 import { DialogueLine, DialogueTake, AudioSettings } from '../types'
 import { playCountdownStep } from '../utils/beeps'
+import { LayerSelector } from './LayerSelector'
 import {
   Mic,
   Square,
@@ -11,6 +12,7 @@ import {
   Sliders,
   Trash2,
   Check,
+  Layers,
 } from 'lucide-react'
 
 interface Step2RecordingProps {
@@ -22,6 +24,9 @@ interface Step2RecordingProps {
   onOpenSettings: () => void
   onAdvanceToExport: () => void
   isActive?: boolean
+  currentLayer: number
+  setCurrentLayer: (layer: number | ((prev: number) => number)) => void
+  onBackToAnnotation?: () => void
 }
 
 export const Step2Recording: React.FC<Step2RecordingProps> = ({
@@ -33,10 +38,30 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
   onOpenSettings,
   onAdvanceToExport,
   isActive = true,
+  currentLayer,
+  setCurrentLayer,
+  onBackToAnnotation,
 }) => {
+  const [filterMode, setFilterMode] = useState<'layer' | 'all'>('layer')
   const [currentLineIndex, setCurrentLineIndex] = useState<number>(0)
-  const safeLineIndex = lines.length > 0 ? Math.min(currentLineIndex, lines.length - 1) : 0
-  const currentLine = lines[safeLineIndex] || null
+
+  const activeLines = filterMode === 'layer'
+    ? lines.filter((l) => (l.layer || 1) === currentLayer)
+    : lines
+
+  const safeLineIndex = activeLines.length > 0 ? Math.min(currentLineIndex, activeLines.length - 1) : 0
+  const currentLine = activeLines[safeLineIndex] || null
+
+  const linesByLayer = lines.reduce<Record<number, number>>((acc, l) => {
+    const lyr = l.layer || 1
+    acc[lyr] = (acc[lyr] || 0) + 1
+    return acc
+  }, {})
+
+  // Reset index when changing layer or filter mode
+  useEffect(() => {
+    setCurrentLineIndex(0)
+  }, [currentLayer, filterMode])
 
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [isPlayingPreview, setIsPlayingPreview] = useState<boolean>(false)
@@ -145,16 +170,18 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
   }
 
   const handleSelectActiveTake = (takeIndex: number) => {
+    if (!currentLine) return
     setLines((prev) =>
-      prev.map((l, idx) => (idx === currentLineIndex ? { ...l, activeTakeIndex: takeIndex } : l))
+      prev.map((l) => (l.id === currentLine.id ? { ...l, activeTakeIndex: takeIndex } : l))
     )
   }
 
   const handleDeleteTake = (takeId: string) => {
     stopTakePreview()
+    if (!currentLine) return
     setLines((prev) =>
-      prev.map((l, idx) => {
-        if (idx !== currentLineIndex) return l
+      prev.map((l) => {
+        if (l.id !== currentLine.id) return l
         const updatedTakes = l.takes.filter((t) => t.id !== takeId)
         return {
           ...l,
@@ -269,8 +296,8 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
         }
 
         setLines((prev) =>
-          prev.map((l, idx) => {
-            if (idx !== currentLineIndex) return l
+          prev.map((l) => {
+            if (l.id !== currentLine.id) return l
             const newTakes = [...(l.takes || []), newTake]
             return {
               ...l,
@@ -358,7 +385,7 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
   }, [isActive, isRecording, startRecordingProcess, stopRecording, currentLineIndex, lines.length])
 
   const handleNextLine = () => {
-    if (currentLineIndex < lines.length - 1) {
+    if (safeLineIndex < activeLines.length - 1) {
       stopRecording()
       stopPreview()
       stopTakePreview()
@@ -367,7 +394,7 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
   }
 
   const handlePrevLine = () => {
-    if (currentLineIndex > 0) {
+    if (safeLineIndex > 0) {
       stopRecording()
       stopPreview()
       stopTakePreview()
@@ -428,8 +455,60 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
 
   if (!currentLine) {
     return (
-      <div className="flex-1 flex items-center justify-center text-zinc-600 text-xs">
-        Nenhuma fala cadastrada.
+      <div className="flex-1 flex flex-col h-[calc(100vh-3rem)] overflow-hidden bg-[#050505]">
+        {/* Top Info Bar with Layer Switcher */}
+        <div className="h-10 bg-black border-b border-zinc-900 px-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <LayerSelector
+              currentLayer={currentLayer}
+              onLayerChange={(layer) => {
+                setCurrentLayer(layer)
+                setCurrentLineIndex(0)
+              }}
+              totalLinesByLayer={linesByLayer}
+            />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setFilterMode((prev) => (prev === 'layer' ? 'all' : 'layer'))}
+              className="text-[10px] font-mono px-2 py-0.5 rounded border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-700 transition-colors cursor-pointer"
+            >
+              {filterMode === 'all' ? 'Ver por Camada' : 'Ver Todas as Camadas'}
+            </button>
+          </div>
+        </div>
+
+        {/* Empty State */}
+        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center bg-black">
+          <div className="w-12 h-12 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center text-zinc-400 mb-3">
+            <Layers className="w-5 h-5" />
+          </div>
+          <h3 className="text-sm font-semibold text-white mb-1">
+            Nenhuma fala marcada na Camada {currentLayer}
+          </h3>
+          <p className="text-xs text-zinc-500 max-w-sm mb-5 leading-relaxed">
+            Você pode navegar entre as camadas usando as setas do seletor acima ou voltar para a aba de Anotação para marcar as falas deste personagem.
+          </p>
+          <div className="flex items-center gap-2">
+            {onBackToAnnotation && (
+              <button
+                onClick={onBackToAnnotation}
+                className="px-4 py-2 bg-white text-black hover:bg-zinc-200 text-xs font-medium rounded transition-colors cursor-pointer"
+              >
+                Voltar para Anotação
+              </button>
+            )}
+            {currentLayer > 1 && (
+              <button
+                onClick={() => setCurrentLayer(1)}
+                className="px-4 py-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-300 text-xs rounded border border-zinc-800 transition-colors cursor-pointer"
+              >
+                Ir para Camada 1
+              </button>
+            )}
+          </div>
+        </div>
       </div>
     )
   }
@@ -439,32 +518,46 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
       {/* Minimal Top Info Bar */}
       <div className="h-10 bg-black border-b border-zinc-900 px-4 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5 text-xs">
+          <LayerSelector
+            currentLayer={currentLayer}
+            onLayerChange={(layer) => {
+              setCurrentLayer(layer)
+              setCurrentLineIndex(0)
+            }}
+            totalLinesByLayer={linesByLayer}
+          />
+
+          <div className="flex items-center gap-1.5 text-xs pl-2 border-l border-zinc-900">
             <span className="text-zinc-500 font-mono">Fala</span>
-            <span className="font-mono text-white font-bold">#{currentLineIndex + 1}</span>
-            <span className="text-zinc-600 text-[11px]">/ {lines.length}</span>
+            <span className="font-mono text-white font-bold">#{safeLineIndex + 1}</span>
+            <span className="text-zinc-600 text-[11px]">/ {activeLines.length}</span>
+            {(filterMode === 'all' || (currentLine.layer || 1) !== currentLayer) && (
+              <span className="font-mono text-[9px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-300">
+                Camada {currentLine.layer || 1}
+              </span>
+            )}
           </div>
 
           <div className="flex items-center gap-0.5">
             <button
               onClick={handlePrevLine}
-              disabled={currentLineIndex === 0}
-              className="p-1 hover:text-white disabled:opacity-20 text-zinc-500 rounded"
-              title="Fala Anterior"
+              disabled={safeLineIndex === 0}
+              className="p-1 hover:text-white disabled:opacity-20 text-zinc-500 rounded cursor-pointer"
+              title="Fala Anterior (Seta Esquerda)"
             >
               <ChevronLeft className="w-3.5 h-3.5" />
             </button>
             <button
               onClick={handleNextLine}
-              disabled={currentLineIndex === lines.length - 1}
-              className="p-1 hover:text-white disabled:opacity-20 text-zinc-500 rounded"
-              title="Próxima Fala"
+              disabled={safeLineIndex >= activeLines.length - 1}
+              className="p-1 hover:text-white disabled:opacity-20 text-zinc-500 rounded cursor-pointer"
+              title="Próxima Fala (Seta Direita)"
             >
               <ChevronRight className="w-3.5 h-3.5" />
             </button>
           </div>
 
-          <span className="text-[11px] font-mono text-zinc-500 pl-2 border-l border-zinc-900">
+          <span className="text-[11px] font-mono text-zinc-500 pl-2 border-l border-zinc-900 hidden sm:inline">
             {formatTime(currentLine.startTime)} ➔ {formatTime(currentLine.endTime)} (
             {(currentLine.endTime - currentLine.startTime).toFixed(2)}s)
           </span>

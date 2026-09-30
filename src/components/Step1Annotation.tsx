@@ -3,6 +3,7 @@ import WaveSurfer from 'wavesurfer.js'
 import RegionsPlugin, { Region } from 'wavesurfer.js/dist/plugins/regions.esm.js'
 import TimelinePlugin from 'wavesurfer.js/dist/plugins/timeline.esm.js'
 import { DialogueLine } from '../types'
+import { LayerSelector } from './LayerSelector'
 import {
   Upload,
   Play,
@@ -13,6 +14,7 @@ import {
   ChevronRight,
   ZoomIn,
   ZoomOut,
+  Layers,
 } from 'lucide-react'
 
 interface Step1AnnotationProps {
@@ -24,6 +26,8 @@ interface Step1AnnotationProps {
   onSelectVideo: () => void
   onAdvanceToRecording: () => void
   isActive?: boolean
+  currentLayer: number
+  setCurrentLayer: (layer: number | ((prev: number) => number)) => void
 }
 
 export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
@@ -35,6 +39,8 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   onSelectVideo,
   onAdvanceToRecording,
   isActive = true,
+  currentLayer,
+  setCurrentLayer,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const waveformContainerRef = useRef<HTMLDivElement | null>(null)
@@ -48,6 +54,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   const [isLoadingAudio, setIsLoadingAudio] = useState<boolean>(false)
   const [isCtrlHeld, setIsCtrlHeld] = useState<boolean>(false)
   const [zoomLevel, setZoomLevel] = useState<number>(30)
+  const [showAllLayers, setShowAllLayers] = useState<boolean>(false)
 
   // Pending region dialog for typing line text
   const [pendingRegion, setPendingRegion] = useState<{
@@ -136,6 +143,50 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
     }
   }, [])
 
+  // Synchronize WaveSurfer regions with active layer & ghost markers for other layers
+  const syncRegions = useCallback(
+    (layer: number, allLines: DialogueLine[]) => {
+      const wsRegions = wsRegionsRef.current
+      if (!wsRegions) return
+
+      wsRegions.clearRegions()
+
+      // 1. Active layer regions: fully editable and interactive
+      const activeLayerLines = allLines.filter((l) => (l.layer || 1) === layer)
+      activeLayerLines.forEach((l) => {
+        const reg = wsRegions.addRegion({
+          id: l.id,
+          start: l.startTime,
+          end: l.endTime,
+          content: l.text,
+          color: 'rgba(255, 255, 255, 0.14)',
+          drag: false,
+          resize: true,
+        })
+        attachRegionContextMenu(reg)
+      })
+
+      // 2. Ghost markers for other layers: faint, non-interactive visual guide
+      const otherLayerLines = allLines.filter((l) => (l.layer || 1) !== layer)
+      otherLayerLines.forEach((l) => {
+        const reg = wsRegions.addRegion({
+          id: `ghost_${l.id}`,
+          start: l.startTime,
+          end: l.endTime,
+          content: `[C${l.layer || 1}] ${l.text}`,
+          color: 'rgba(100, 116, 139, 0.08)',
+          drag: false,
+          resize: false,
+        })
+        if (reg.element) {
+          reg.element.style.pointerEvents = 'none'
+          reg.element.style.opacity = '0.5'
+        }
+      })
+    },
+    [attachRegionContextMenu]
+  )
+
   // Initialize WaveSurfer
   useEffect(() => {
     if (!videoMediaUrl || !waveformContainerRef.current) return
@@ -220,18 +271,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
         ws.zoom(zoomLevel)
       } catch (e) {}
 
-      lines.forEach((l) => {
-        const reg = wsRegions.addRegion({
-          id: l.id,
-          start: l.startTime,
-          end: l.endTime,
-          content: l.text,
-          color: 'rgba(255, 255, 255, 0.12)',
-          drag: false,
-          resize: true,
-        })
-        attachRegionContextMenu(reg)
-      })
+      syncRegions(currentLayer, linesRef.current)
     })
 
     ws.on('timeupdate', (time) => {
@@ -320,6 +360,14 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       }
     }
   }, [zoomLevel])
+
+  // Sync WaveSurfer regions when currentLayer changes or when lines are added/removed
+  const linesSignature = lines.map((l) => `${l.id}_${l.layer || 1}`).join(';')
+  useEffect(() => {
+    if (wsRef.current && wsRegionsRef.current) {
+      syncRegions(currentLayer, lines)
+    }
+  }, [currentLayer, linesSignature, syncRegions])
 
   const togglePlay = useCallback(() => {
     setPlayingLineId(null)
@@ -580,6 +628,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       text,
       takes: [],
       activeTakeIndex: 0,
+      layer: currentLayer,
     }
 
     setLines((prev) => [...prev, newLine].sort((a, b) => a.startTime - b.startTime))
@@ -673,6 +722,16 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
             {/* Minimal Toolbar */}
             <div className="h-8 bg-black border-b border-zinc-900 px-4 flex items-center justify-between text-xs">
               <div className="flex items-center gap-3">
+                <LayerSelector
+                  currentLayer={currentLayer}
+                  onLayerChange={(layer) => setCurrentLayer(layer)}
+                  totalLinesByLayer={lines.reduce<Record<number, number>>((acc, l) => {
+                    const lyr = l.layer || 1
+                    acc[lyr] = (acc[lyr] || 0) + 1
+                    return acc
+                  }, {})}
+                />
+
                 <span
                   className={`text-[11px] font-mono px-1.5 py-0.5 rounded transition-all ${
                     isCtrlHeld
@@ -849,18 +908,40 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
           {/* Right Sidebar: Lines List */}
           <div className="w-72 bg-black flex flex-col justify-between overflow-hidden">
             <div className="p-3 border-b border-zinc-900 flex items-center justify-between">
-              <span className="text-xs font-medium text-white uppercase tracking-wider">Roteiro</span>
-              <span className="text-[11px] font-mono text-zinc-500">{lines.length} falas</span>
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-medium text-white uppercase tracking-wider">Roteiro</span>
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-zinc-900 border border-zinc-800 text-zinc-300 font-semibold">
+                  C{currentLayer}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowAllLayers((prev) => !prev)}
+                  className={`text-[10px] font-mono px-1.5 py-0.5 rounded border transition-colors cursor-pointer ${
+                    showAllLayers
+                      ? 'bg-zinc-800 text-white border-zinc-600'
+                      : 'bg-zinc-950 text-zinc-400 border-zinc-800 hover:border-zinc-700'
+                  }`}
+                  title="Alternar entre ver falas da camada atual ou todas as camadas"
+                >
+                  {showAllLayers ? 'Todas' : `Camada ${currentLayer}`}
+                </button>
+                <span className="text-[11px] font-mono text-zinc-500">
+                  {(showAllLayers ? lines : lines.filter((l) => (l.layer || 1) === currentLayer)).length} falas
+                </span>
+              </div>
             </div>
 
             {/* List */}
             <div className="flex-1 overflow-y-auto p-2 space-y-1.5">
-              {lines.length === 0 ? (
+              {(showAllLayers ? lines : lines.filter((l) => (l.layer || 1) === currentLayer)).length === 0 ? (
                 <div className="text-center py-10 px-3 text-zinc-600 text-xs">
-                  Segure CTRL e arraste na waveform para marcar uma fala.
+                  {showAllLayers
+                    ? 'Segure CTRL e arraste na waveform para marcar uma fala.'
+                    : `Nenhuma fala na Camada ${currentLayer}. Segure CTRL e arraste na waveform para marcar as falas deste personagem.`}
                 </div>
               ) : (
-                lines.map((line, index) => (
+                (showAllLayers ? lines : lines.filter((l) => (l.layer || 1) === currentLayer)).map((line, index) => (
                   <div
                     key={line.id}
                     onClick={() => handleSeekToLine(line)}
@@ -882,6 +963,11 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
                     <div className="flex items-center justify-between text-[10px]">
                       <div className="flex items-center gap-1.5">
                         <span className="font-mono text-zinc-500 font-bold">#{index + 1}</span>
+                        {(showAllLayers || (line.layer || 1) !== currentLayer) && (
+                          <span className="font-mono text-[9px] px-1 py-0.2 rounded bg-zinc-800 text-zinc-300 font-medium">
+                            C{line.layer || 1}
+                          </span>
+                        )}
                         <span className="font-mono text-zinc-400">
                           {formatTime(line.startTime)} - {formatTime(line.endTime)}
                         </span>
@@ -991,7 +1077,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
         >
           <div className="px-3 py-1.5 border-b border-zinc-800 text-[10px] text-zinc-400 font-mono flex items-center justify-between">
             <span>Fala #{lines.findIndex((l) => l.id === contextMenu.line.id) + 1}</span>
-            <span>{formatTime(contextMenu.line.startTime)}</span>
+            <span className="text-zinc-300 font-semibold">Camada {contextMenu.line.layer || 1}</span>
           </div>
 
           <button
@@ -1016,6 +1102,41 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
             <Edit2 className="w-3.5 h-3.5 text-zinc-400" />
             <span>Editar Fala</span>
           </button>
+
+          <div className="my-1 border-t border-zinc-800" />
+
+          {/* Move to another layer */}
+          <button
+            onClick={() => {
+              const targetId = contextMenu.line.id
+              const currentL = contextMenu.line.layer || 1
+              setContextMenu(null)
+              setLines((prev) =>
+                prev.map((l) => (l.id === targetId ? { ...l, layer: currentL + 1 } : l))
+              )
+            }}
+            className="w-full px-3 py-1.5 text-left hover:bg-zinc-800/80 text-zinc-300 hover:text-white flex items-center gap-2 transition-colors cursor-pointer text-[11px]"
+          >
+            <Layers className="w-3.5 h-3.5 text-zinc-400" />
+            <span>Mover para Camada {(contextMenu.line.layer || 1) + 1}</span>
+          </button>
+
+          {(contextMenu.line.layer || 1) > 1 && (
+            <button
+              onClick={() => {
+                const targetId = contextMenu.line.id
+                const currentL = contextMenu.line.layer || 1
+                setContextMenu(null)
+                setLines((prev) =>
+                  prev.map((l) => (l.id === targetId ? { ...l, layer: currentL - 1 } : l))
+                )
+              }}
+              className="w-full px-3 py-1.5 text-left hover:bg-zinc-800/80 text-zinc-300 hover:text-white flex items-center gap-2 transition-colors cursor-pointer text-[11px]"
+            >
+              <Layers className="w-3.5 h-3.5 text-zinc-400" />
+              <span>Mover para Camada {(contextMenu.line.layer || 1) - 1}</span>
+            </button>
+          )}
 
           <div className="my-1 border-t border-zinc-800" />
 

@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { AppStep, RecentProject } from '../types'
+import { LayerSelector } from './LayerSelector'
 import {
   Settings,
   Film,
@@ -29,6 +30,9 @@ interface NavbarProps {
   onSaveProjectAs: () => void
   onCloseProject: () => void
   onClearRecents: () => void
+  currentLayer: number
+  onLayerChange: (layer: number) => void
+  linesCountByLayer?: Record<number, number>
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -47,6 +51,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   onSaveProjectAs,
   onCloseProject,
   onClearRecents,
+  currentLayer,
+  onLayerChange,
+  linesCountByLayer = {},
 }) => {
   const [isProjectMenuOpen, setIsProjectMenuOpen] = useState(false)
   const [showRecentsMenu, setShowRecentsMenu] = useState(false)
@@ -243,6 +250,15 @@ export const Navbar: React.FC<NavbarProps> = ({
             <span className="truncate text-zinc-400 font-mono text-[11px]">{videoName}</span>
           </div>
         )}
+
+        {/* Global Layer Switcher */}
+        <div className="pl-2 border-l border-zinc-900">
+          <LayerSelector
+            currentLayer={currentLayer}
+            onLayerChange={onLayerChange}
+            totalLinesByLayer={linesCountByLayer}
+          />
+        </div>
       </div>
 
       {/* Minimal Stepper Navigation */}

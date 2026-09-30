@@ -321,6 +321,29 @@ ipcMain.handle('project:save', async (_, { filePath, data }) => {
   try {
     addRecentProject(filePath)
 
+    const embedMedia = data.embedMedia !== false
+
+    // If user chose not to embed media, save as lightweight JSON referencing files
+    if (!embedMedia) {
+      const manifest = {
+        ...data,
+        dubdtVersion: '2.0',
+        embedMedia: false,
+        updatedAt: Date.now(),
+        videoPath: data.videoPath || null,
+        videoName: data.videoName || (data.videoPath ? path.basename(data.videoPath) : null),
+        customBgAudioPath: data.customBgAudioPath || null,
+      }
+
+      const targetFolder = path.dirname(filePath)
+      if (!fs.existsSync(targetFolder)) {
+        fs.mkdirSync(targetFolder, { recursive: true })
+      }
+
+      fs.writeFileSync(filePath, JSON.stringify(manifest, null, 2), 'utf-8')
+      return { success: true, filePath, embedMedia: false }
+    }
+
     // Staging directory for bundling
     const stagingBase = path.join(app.getPath('userData'), 'dubdt_staging')
     if (!fs.existsSync(stagingBase)) {
@@ -332,6 +355,7 @@ ipcMain.handle('project:save', async (_, { filePath, data }) => {
     const manifest = {
       ...data,
       dubdtVersion: '2.0',
+      embedMedia: true,
       updatedAt: Date.now(),
     }
 
@@ -427,7 +451,7 @@ ipcMain.handle('project:save', async (_, { filePath, data }) => {
       fs.rmSync(stagingDir, { recursive: true, force: true })
     } catch (e) {}
 
-    return { success: true, filePath }
+    return { success: true, filePath, embedMedia: true }
   } catch (err) {
     console.error('Erro ao salvar arquivo de projeto (.dubdt):', err)
     throw err
@@ -490,6 +514,7 @@ ipcMain.handle('project:load', async (_, filePath) => {
           }
         }
       }
+      project.embedMedia = false
     } else {
       // TAR archive containing embedded video, takes, and project.json!
       const projectId = crypto.createHash('md5').update(filePath).digest('hex').slice(0, 12)
@@ -509,6 +534,7 @@ ipcMain.handle('project:load', async (_, filePath) => {
       }
 
       project = JSON.parse(fs.readFileSync(manifestPath, 'utf-8'))
+      project.embedMedia = true
 
       // Locate embedded video
       if (project.videoFileName) {
@@ -552,6 +578,15 @@ ipcMain.handle('project:load', async (_, filePath) => {
             }
           }
         }
+      }
+    }
+
+    if (project) {
+      project.currentLayer = project.currentLayer || 1
+      if (Array.isArray(project.lines)) {
+        project.lines.forEach((line) => {
+          line.layer = line.layer || 1
+        })
       }
     }
 
@@ -747,13 +782,36 @@ ipcMain.handle('fs:saveTakeAudio', async (_, { lineId, takeNumber, buffer }) => 
   }
 })
 
-// 7. Export dialogue script as .txt (clean dialogue lines separated by newline)
+// 7. Export dialogue script as .txt (separated by [Camada (numero)] and dialogue lines)
 ipcMain.handle('fs:exportScriptTxt', async (_, { filePath, lines }) => {
-  const content = lines
-    .map((l) => (l.text || '').trim())
-    .filter((text) => text.length > 0)
-    .join('\n')
+  const layerMap = new Map()
 
+  for (const line of (lines || [])) {
+    const lNum = line.layer && line.layer >= 1 ? line.layer : 1
+    if (!layerMap.has(lNum)) {
+      layerMap.set(lNum, [])
+    }
+    const txt = (line.text || '').trim()
+    if (txt.length > 0) {
+      layerMap.get(lNum).push(txt)
+    }
+  }
+
+  const sortedLayers = Array.from(layerMap.keys()).sort((a, b) => a - b)
+  if (sortedLayers.length === 0) {
+    sortedLayers.push(1)
+    layerMap.set(1, [])
+  }
+
+  const sections = []
+  for (const lNum of sortedLayers) {
+    const layerLines = layerMap.get(lNum) || []
+    if (layerLines.length > 0) {
+      sections.push(`[Camada ${lNum}]\n` + layerLines.join('\n'))
+    }
+  }
+
+  const content = sections.join('\n\n')
   fs.writeFileSync(filePath, content ? content + '\n' : '', 'utf-8')
   return true
 })

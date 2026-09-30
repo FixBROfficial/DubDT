@@ -14,6 +14,7 @@ export interface DialogueLine {
   text: string
   takes: DialogueTake[]
   activeTakeIndex: number
+  layer?: number // 1, 2, 3...
 }
 
 export interface AudioSettings {
@@ -64,4 +65,6 @@ export interface DubDTProject {
   lines: DialogueLine[]
   audioSettings: AudioSettings
   exportSettings: ExportSettings
+  embedMedia?: boolean
+  currentLayer?: number
 }

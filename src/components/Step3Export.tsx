@@ -15,6 +15,7 @@ import {
   Volume2,
   VolumeX,
   Disc,
+  Layers,
 } from 'lucide-react'
 
 interface Step3ExportProps {
@@ -48,6 +49,11 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
   const [currentTime, setCurrentTime] = useState<number>(0)
   const [duration, setDuration] = useState<number>(0)
   const playingTakeLineIdRef = useRef<string | null>(null)
+
+  const [selectedLayerExport, setSelectedLayerExport] = useState<number | 'all' | 'separate'>('all')
+
+  const uniqueLayers = Array.from(new Set(lines.map((l) => l.layer || 1))).sort((a, b) => a - b)
+  if (uniqueLayers.length === 0) uniqueLayers.push(1)
 
   const recordedLinesCount = lines.filter((l) => l.takes && l.takes.length > 0).length
 
@@ -282,34 +288,77 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
     setErrorMessage(null)
 
     try {
-      const defaultName = `DubDT_Mix_${Date.now()}.mp4`
-      const savePath = await window.electronAPI.saveFileDialog({
-        title: 'Salvar Vídeo Dublado',
-        defaultPath: defaultName,
-        filters: [{ name: 'Vídeo MP4', extensions: ['mp4'] }],
-      })
+      if (selectedLayerExport === 'separate') {
+        const targetDir = await window.electronAPI.selectDirectory()
+        if (!targetDir) {
+          setIsExporting(false)
+          return
+        }
 
-      if (!savePath) {
-        setIsExporting(false)
-        return
+        let exportedCount = 0
+        for (const lNum of uniqueLayers) {
+          const layerLines = lines.filter((l) => (l.layer || 1) === lNum)
+          if (layerLines.length === 0) continue
+
+          setExportProgressText(`Renderizando vídeo da Camada ${lNum}...`)
+          const outPath = `${targetDir}\\Video_Camada_${lNum}_${Date.now()}.mp4`
+
+          await window.electronAPI.exportMix({
+            videoPath,
+            outputPath: outPath,
+            exportType: 'video',
+            includeOriginalAudio: exportSettings.includeOriginalAudio,
+            originalAudioVolume: exportSettings.originalAudioVolume,
+            customBgAudioPath: exportSettings.customBgAudioPath,
+            customBgAudioVolume: exportSettings.customBgAudioVolume,
+            recordedVoicesVolume: exportSettings.recordedVoicesVolume,
+            voicePreset: exportSettings.voicePreset,
+            enableNoiseSuppression: exportSettings.enableNoiseSuppression,
+            noiseSuppressionLevel: exportSettings.noiseSuppressionLevel,
+            lines: layerLines,
+          })
+          exportedCount++
+        }
+
+        setExportSuccessMessage(`${exportedCount} vídeos exportados por camada em: ${targetDir}`)
+      } else {
+        const defaultName = typeof selectedLayerExport === 'number'
+          ? `DubDT_Mix_Camada_${selectedLayerExport}_${Date.now()}.mp4`
+          : `DubDT_Mix_TodasCamadas_${Date.now()}.mp4`
+
+        const savePath = await window.electronAPI.saveFileDialog({
+          title: 'Salvar Vídeo Dublado',
+          defaultPath: defaultName,
+          filters: [{ name: 'Vídeo MP4', extensions: ['mp4'] }],
+        })
+
+        if (!savePath) {
+          setIsExporting(false)
+          return
+        }
+
+        const targetLines = typeof selectedLayerExport === 'number'
+          ? lines.filter((l) => (l.layer || 1) === selectedLayerExport)
+          : lines
+
+        setExportProgressText('Renderizando vídeo com FFmpeg...')
+        await window.electronAPI.exportMix({
+          videoPath,
+          outputPath: savePath,
+          exportType: 'video',
+          includeOriginalAudio: exportSettings.includeOriginalAudio,
+          originalAudioVolume: exportSettings.originalAudioVolume,
+          customBgAudioPath: exportSettings.customBgAudioPath,
+          customBgAudioVolume: exportSettings.customBgAudioVolume,
+          recordedVoicesVolume: exportSettings.recordedVoicesVolume,
+          voicePreset: exportSettings.voicePreset,
+          enableNoiseSuppression: exportSettings.enableNoiseSuppression,
+          noiseSuppressionLevel: exportSettings.noiseSuppressionLevel,
+          lines: targetLines,
+        })
+
+        setExportSuccessMessage(`Vídeo exportado com sucesso: ${savePath}`)
       }
-
-      await window.electronAPI.exportMix({
-        videoPath,
-        outputPath: savePath,
-        exportType: 'video',
-        includeOriginalAudio: exportSettings.includeOriginalAudio,
-        originalAudioVolume: exportSettings.originalAudioVolume,
-        customBgAudioPath: exportSettings.customBgAudioPath,
-        customBgAudioVolume: exportSettings.customBgAudioVolume,
-        recordedVoicesVolume: exportSettings.recordedVoicesVolume,
-        voicePreset: exportSettings.voicePreset,
-        enableNoiseSuppression: exportSettings.enableNoiseSuppression,
-        noiseSuppressionLevel: exportSettings.noiseSuppressionLevel,
-        lines,
-      })
-
-      setExportSuccessMessage(`Vídeo exportado com sucesso: ${savePath}`)
     } catch (err: any) {
       setErrorMessage(err?.message || 'Falha ao exportar vídeo.')
     } finally {
@@ -325,37 +374,80 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
     setErrorMessage(null)
 
     try {
-      const defaultName = `DubDT_Audio_${Date.now()}.wav`
-      const savePath = await window.electronAPI.saveFileDialog({
-        title: 'Salvar Áudio Mixado',
-        defaultPath: defaultName,
-        filters: [
-          { name: 'Áudio WAV', extensions: ['wav'] },
-          { name: 'Áudio MP3', extensions: ['mp3'] },
-        ],
-      })
+      if (selectedLayerExport === 'separate') {
+        const targetDir = await window.electronAPI.selectDirectory()
+        if (!targetDir) {
+          setIsExporting(false)
+          return
+        }
 
-      if (!savePath) {
-        setIsExporting(false)
-        return
+        let exportedCount = 0
+        for (const lNum of uniqueLayers) {
+          const layerLines = lines.filter((l) => (l.layer || 1) === lNum)
+          if (layerLines.length === 0) continue
+
+          setExportProgressText(`Mixando áudio da Camada ${lNum}...`)
+          const outPath = `${targetDir}\\Audio_Camada_${lNum}_${Date.now()}.wav`
+
+          await window.electronAPI.exportMix({
+            videoPath,
+            outputPath: outPath,
+            exportType: 'audio',
+            includeOriginalAudio: exportSettings.includeOriginalAudio,
+            originalAudioVolume: exportSettings.originalAudioVolume,
+            customBgAudioPath: exportSettings.customBgAudioPath,
+            customBgAudioVolume: exportSettings.customBgAudioVolume,
+            recordedVoicesVolume: exportSettings.recordedVoicesVolume,
+            voicePreset: exportSettings.voicePreset,
+            enableNoiseSuppression: exportSettings.enableNoiseSuppression,
+            noiseSuppressionLevel: exportSettings.noiseSuppressionLevel,
+            lines: layerLines,
+          })
+          exportedCount++
+        }
+
+        setExportSuccessMessage(`${exportedCount} áudios exportados por camada em: ${targetDir}`)
+      } else {
+        const defaultName = typeof selectedLayerExport === 'number'
+          ? `DubDT_Audio_Camada_${selectedLayerExport}_${Date.now()}.wav`
+          : `DubDT_Audio_TodasCamadas_${Date.now()}.wav`
+
+        const savePath = await window.electronAPI.saveFileDialog({
+          title: 'Salvar Áudio Mixado',
+          defaultPath: defaultName,
+          filters: [
+            { name: 'Áudio WAV', extensions: ['wav'] },
+            { name: 'Áudio MP3', extensions: ['mp3'] },
+          ],
+        })
+
+        if (!savePath) {
+          setIsExporting(false)
+          return
+        }
+
+        const targetLines = typeof selectedLayerExport === 'number'
+          ? lines.filter((l) => (l.layer || 1) === selectedLayerExport)
+          : lines
+
+        setExportProgressText('Mixando faixas de áudio...')
+        await window.electronAPI.exportMix({
+          videoPath,
+          outputPath: savePath,
+          exportType: 'audio',
+          includeOriginalAudio: exportSettings.includeOriginalAudio,
+          originalAudioVolume: exportSettings.originalAudioVolume,
+          customBgAudioPath: exportSettings.customBgAudioPath,
+          customBgAudioVolume: exportSettings.customBgAudioVolume,
+          recordedVoicesVolume: exportSettings.recordedVoicesVolume,
+          voicePreset: exportSettings.voicePreset,
+          enableNoiseSuppression: exportSettings.enableNoiseSuppression,
+          noiseSuppressionLevel: exportSettings.noiseSuppressionLevel,
+          lines: targetLines,
+        })
+
+        setExportSuccessMessage(`Áudio exportado com sucesso: ${savePath}`)
       }
-
-      await window.electronAPI.exportMix({
-        videoPath,
-        outputPath: savePath,
-        exportType: 'audio',
-        includeOriginalAudio: exportSettings.includeOriginalAudio,
-        originalAudioVolume: exportSettings.originalAudioVolume,
-        customBgAudioPath: exportSettings.customBgAudioPath,
-        customBgAudioVolume: exportSettings.customBgAudioVolume,
-        recordedVoicesVolume: exportSettings.recordedVoicesVolume,
-        voicePreset: exportSettings.voicePreset,
-        enableNoiseSuppression: exportSettings.enableNoiseSuppression,
-        noiseSuppressionLevel: exportSettings.noiseSuppressionLevel,
-        lines,
-      })
-
-      setExportSuccessMessage(`Áudio exportado com sucesso: ${savePath}`)
     } catch (err: any) {
       setErrorMessage(err?.message || 'Falha ao exportar áudio.')
     } finally {
@@ -381,12 +473,16 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
         return
       }
 
+      const targetLines = typeof selectedLayerExport === 'number'
+        ? lines.filter((l) => (l.layer || 1) === selectedLayerExport)
+        : lines
+
       const res = await window.electronAPI.exportClips({
         videoPath,
         outputDir: targetDir,
         clipFormat: exportSettings.clipFormat,
         includeBackground: exportSettings.includeOriginalAudio,
-        lines,
+        lines: targetLines,
         voicePreset: exportSettings.voicePreset,
         recordedVoicesVolume: exportSettings.recordedVoicesVolume,
         enableNoiseSuppression: exportSettings.enableNoiseSuppression,
@@ -406,17 +502,41 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
   const handleExportTxt = async () => {
     if (!window.electronAPI) return
     try {
-      const defaultName = `Roteiro_DubDT_${Date.now()}.txt`
-      const savePath = await window.electronAPI.saveFileDialog({
-        title: 'Salvar Roteiro (.txt)',
-        defaultPath: defaultName,
-        filters: [{ name: 'Arquivo de Texto', extensions: ['txt'] }],
-      })
+      if (selectedLayerExport === 'separate') {
+        const targetDir = await window.electronAPI.selectDirectory()
+        if (!targetDir) return
 
-      if (!savePath) return
+        let exportedCount = 0
+        for (const lNum of uniqueLayers) {
+          const layerLines = lines.filter((l) => (l.layer || 1) === lNum)
+          if (layerLines.length === 0) continue
 
-      await window.electronAPI.exportScriptTxt(savePath, lines)
-      setExportSuccessMessage(`Roteiro .txt salvo: ${savePath}`)
+          const outPath = `${targetDir}\\Roteiro_Camada_${lNum}.txt`
+          await window.electronAPI.exportScriptTxt(outPath, layerLines)
+          exportedCount++
+        }
+
+        setExportSuccessMessage(`${exportedCount} roteiros salvos por camada em: ${targetDir}`)
+      } else {
+        const defaultName = typeof selectedLayerExport === 'number'
+          ? `Roteiro_Camada_${selectedLayerExport}_${Date.now()}.txt`
+          : `Roteiro_DubDT_${Date.now()}.txt`
+
+        const savePath = await window.electronAPI.saveFileDialog({
+          title: 'Salvar Roteiro (.txt)',
+          defaultPath: defaultName,
+          filters: [{ name: 'Arquivo de Texto', extensions: ['txt'] }],
+        })
+
+        if (!savePath) return
+
+        const targetLines = typeof selectedLayerExport === 'number'
+          ? lines.filter((l) => (l.layer || 1) === selectedLayerExport)
+          : lines
+
+        await window.electronAPI.exportScriptTxt(savePath, targetLines)
+        setExportSuccessMessage(`Roteiro .txt salvo: ${savePath}`)
+      }
     } catch (err: any) {
       setErrorMessage(err?.message || 'Falha ao exportar roteiro .txt')
     }
@@ -845,6 +965,102 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
                 />
               </div>
             )}
+          </div>
+        </div>
+
+        {/* Layer Export Mode Selection */}
+        <div className="bg-[#09090b] border border-zinc-900 rounded p-4 space-y-3">
+          <div className="flex items-center justify-between border-b border-zinc-900 pb-2">
+            <div className="flex items-center gap-2">
+              <Layers className="w-3.5 h-3.5 text-zinc-400" />
+              <span className="text-xs font-medium text-white uppercase tracking-wider">
+                Seleção de Camadas para Exportação
+              </span>
+            </div>
+            <span className="text-[10px] font-mono text-zinc-500">
+              {uniqueLayers.length} {uniqueLayers.length === 1 ? 'camada existente' : 'camadas existentes'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+            {/* Todas as Camadas Juntas */}
+            <div
+              onClick={() => setSelectedLayerExport('all')}
+              className={`p-3 rounded border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                selectedLayerExport === 'all'
+                  ? 'bg-zinc-900 border-white shadow-sm ring-1 ring-white/10'
+                  : 'bg-black/40 border-zinc-800 hover:border-zinc-700'
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold text-white">Todas as Camadas</span>
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-300 font-medium">
+                    Juntas
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  Mixar todas as personagens e vozes juntas em um único arquivo final.
+                </p>
+              </div>
+            </div>
+
+            {/* Apenas Camada Selecionada */}
+            <div
+              onClick={() => {
+                if (typeof selectedLayerExport !== 'number') {
+                  setSelectedLayerExport(uniqueLayers[0])
+                }
+              }}
+              className={`p-3 rounded border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                typeof selectedLayerExport === 'number'
+                  ? 'bg-zinc-900 border-white shadow-sm ring-1 ring-white/10'
+                  : 'bg-black/40 border-zinc-800 hover:border-zinc-700'
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold text-white">Apenas uma Camada</span>
+                  <select
+                    value={typeof selectedLayerExport === 'number' ? selectedLayerExport : uniqueLayers[0]}
+                    onChange={(e) => setSelectedLayerExport(parseInt(e.target.value, 10))}
+                    onClick={(e) => e.stopPropagation()}
+                    className="bg-black border border-zinc-700 text-white rounded px-2 py-0.5 text-[11px] font-mono focus:outline-none cursor-pointer"
+                  >
+                    {uniqueLayers.map((num) => (
+                      <option key={num} value={num}>
+                        Camada {num} ({lines.filter((l) => (l.layer || 1) === num).length} falas)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  Exportar exclusivamente as falas gravadas na camada selecionada.
+                </p>
+              </div>
+            </div>
+
+            {/* Exportar Separadamente */}
+            <div
+              onClick={() => setSelectedLayerExport('separate')}
+              className={`p-3 rounded border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                selectedLayerExport === 'separate'
+                  ? 'bg-zinc-900 border-white shadow-sm ring-1 ring-white/10'
+                  : 'bg-black/40 border-zinc-800 hover:border-zinc-700'
+              }`}
+            >
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-semibold text-white">Exportar Separadamente</span>
+                  <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-800/60 font-medium">
+                    Por Camada
+                  </span>
+                </div>
+                <p className="text-[11px] text-zinc-400 leading-relaxed">
+                  Gera um arquivo separado para cada camada em uma pasta de sua escolha.
+                </p>
+              </div>
+            </div>
           </div>
         </div>
 

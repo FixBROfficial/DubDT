@@ -5,6 +5,7 @@ import { Step1Annotation } from './components/Step1Annotation'
 import { Step2Recording } from './components/Step2Recording'
 import { Step3Export } from './components/Step3Export'
 import { AudioSettingsModal } from './components/AudioSettingsModal'
+import { SaveProjectModal } from './components/SaveProjectModal'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { CheckCircle2, AlertTriangle, Info, X } from 'lucide-react'
 
@@ -15,6 +16,9 @@ export const App: React.FC = () => {
   const [currentProjectPath, setCurrentProjectPath] = useState<string | null>(null)
   const [currentProjectName, setCurrentProjectName] = useState<string | null>(null)
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([])
+  const [embedMedia, setEmbedMedia] = useState<boolean>(true)
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState<boolean>(false)
+  const [currentLayer, setCurrentLayer] = useState<number>(1)
   const [notification, setNotification] = useState<{
     message: string
     type: 'success' | 'warning' | 'info'
@@ -97,7 +101,7 @@ export const App: React.FC = () => {
       (videoName ? videoName.replace(/\.[^/.]+$/, '') : 'Projeto DubDT')
 
     return {
-      dubdtVersion: '1.0',
+      dubdtVersion: '2.0',
       name: projName,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -107,6 +111,8 @@ export const App: React.FC = () => {
       lines,
       audioSettings,
       exportSettings,
+      embedMedia,
+      currentLayer,
     }
   }
 
@@ -125,13 +131,50 @@ export const App: React.FC = () => {
     setLines([])
     setCurrentProjectPath(null)
     setCurrentProjectName(null)
+    setCurrentLayer(1)
+    setEmbedMedia(true)
     setCurrentStep('annotate')
     window.electronAPI?.setWindowTitle('DubDT - Estúdio de Dublagem & Fandub')
     showNotification('Novo projeto iniciado.', 'info')
   }
 
-  // Project: Salvar Como
-  const handleSaveProjectAs = async () => {
+  // Project: Salvar Como (sempre pergunta se deseja embutir mídias ou não)
+  const handleSaveProjectAs = () => {
+    setIsSaveModalOpen(true)
+  }
+
+  // Project: Salvar (se já salvo, preserva preferência; se não salvo, abre modal)
+  const handleSaveProject = async () => {
+    if (!currentProjectPath) {
+      return handleSaveProjectAs()
+    }
+
+    if (window.electronAPI) {
+      try {
+        const projectData = buildProjectData()
+        projectData.embedMedia = embedMedia
+
+        if (embedMedia) {
+          showNotification('Empacotando e salvando projeto com mídias embutidas...', 'info')
+        } else {
+          showNotification('Salvando projeto (referências locais)...', 'info')
+        }
+
+        await window.electronAPI.saveProjectFile(currentProjectPath, projectData)
+        loadRecents()
+        showNotification('Projeto salvo com sucesso!', 'success')
+      } catch (err: any) {
+        console.error('Erro ao salvar projeto:', err)
+        showNotification(`Falha ao salvar projeto: ${err?.message}`, 'warning')
+      }
+    }
+  }
+
+  // Callback from SaveProjectModal to execute save with chosen embedMedia option
+  const handleConfirmSaveProject = async (chosenEmbedMedia: boolean) => {
+    setIsSaveModalOpen(false)
+    setEmbedMedia(chosenEmbedMedia)
+
     const defaultName =
       (currentProjectName ||
         (videoName ? videoName.replace(/\.[^/.]+$/, '') : 'MeuProjeto')) + '.dubdt'
@@ -144,14 +187,25 @@ export const App: React.FC = () => {
         const projectName =
           filePath.split(/[\\/]/).pop()?.replace(/\.dubdt$/i, '') || 'Projeto'
         const projectData = buildProjectData(projectName)
+        projectData.embedMedia = chosenEmbedMedia
 
-        showNotification('Empacotando e salvando projeto com vídeo...', 'info')
+        if (chosenEmbedMedia) {
+          showNotification('Empacotando e salvando projeto com mídias embutidas...', 'info')
+        } else {
+          showNotification('Salvando projeto (referências locais)...', 'info')
+        }
+
         await window.electronAPI.saveProjectFile(filePath, projectData)
         setCurrentProjectPath(filePath)
         setCurrentProjectName(projectName)
         window.electronAPI.setWindowTitle(`DubDT - ${projectName}`)
         loadRecents()
-        showNotification(`Projeto salvo com vídeo embutido: ${projectName}.dubdt`, 'success')
+        showNotification(
+          chosenEmbedMedia
+            ? `Projeto salvo com mídias embutidas: ${projectName}.dubdt`
+            : `Projeto salvo com referências locais: ${projectName}.dubdt`,
+          'success'
+        )
       } catch (err: any) {
         console.error('Erro ao salvar projeto:', err)
         showNotification(`Falha ao salvar projeto: ${err?.message}`, 'warning')
@@ -159,6 +213,7 @@ export const App: React.FC = () => {
     } else {
       // Browser fallback: download .dubdt JSON
       const projectData = buildProjectData()
+      projectData.embedMedia = chosenEmbedMedia
       const blob = new Blob([JSON.stringify(projectData, null, 2)], {
         type: 'application/json',
       })
@@ -169,26 +224,6 @@ export const App: React.FC = () => {
       a.click()
       URL.revokeObjectURL(url)
       showNotification('Arquivo .dubdt salvo com sucesso.', 'success')
-    }
-  }
-
-  // Project: Salvar
-  const handleSaveProject = async () => {
-    if (!currentProjectPath) {
-      return handleSaveProjectAs()
-    }
-
-    if (window.electronAPI) {
-      try {
-        const projectData = buildProjectData()
-        showNotification('Empacotando e salvando projeto com vídeo...', 'info')
-        await window.electronAPI.saveProjectFile(currentProjectPath, projectData)
-        loadRecents()
-        showNotification(`Projeto salvo com sucesso!`, 'success')
-      } catch (err: any) {
-        console.error('Erro ao salvar projeto:', err)
-        showNotification(`Falha ao salvar projeto: ${err?.message}`, 'warning')
-      }
     }
   }
 
@@ -234,6 +269,10 @@ export const App: React.FC = () => {
               project.customBgAudioPath || project.exportSettings.customBgAudioPath || null,
           }))
         }
+
+        // Restore layer & embed mode
+        setCurrentLayer(project.currentLayer || 1)
+        setEmbedMedia(project.embedMedia !== false)
 
         setCurrentProjectPath(filePath)
         setCurrentProjectName(projectName)
@@ -293,6 +332,8 @@ export const App: React.FC = () => {
     setLines([])
     setCurrentProjectPath(null)
     setCurrentProjectName(null)
+    setCurrentLayer(1)
+    setEmbedMedia(true)
     setCurrentStep('annotate')
     window.electronAPI?.setWindowTitle('DubDT - Estúdio de Dublagem & Fandub')
     showNotification('Projeto fechado.', 'info')
@@ -377,6 +418,12 @@ export const App: React.FC = () => {
 
   const recordedLinesCount = lines.filter((l) => l.takes && l.takes.length > 0).length
 
+  const linesCountByLayer = lines.reduce<Record<number, number>>((acc, l) => {
+    const lyr = l.layer || 1
+    acc[lyr] = (acc[lyr] || 0) + 1
+    return acc
+  }, {})
+
   return (
     <div className="flex flex-col h-screen w-screen bg-zinc-950 text-zinc-100 overflow-hidden font-sans relative">
       {/* Hidden file inputs for browser development mode */}
@@ -395,7 +442,7 @@ export const App: React.FC = () => {
         className="hidden"
       />
 
-      {/* Top Navbar with Project Menu */}
+      {/* Top Navbar with Project Menu and Global Layer Selector */}
       <Navbar
         currentStep={currentStep}
         setCurrentStep={setCurrentStep}
@@ -412,6 +459,9 @@ export const App: React.FC = () => {
         onSaveProjectAs={handleSaveProjectAs}
         onCloseProject={handleCloseProject}
         onClearRecents={handleClearRecents}
+        currentLayer={currentLayer}
+        onLayerChange={setCurrentLayer}
+        linesCountByLayer={linesCountByLayer}
       />
 
       {/* Floating Notification Toast */}
@@ -453,6 +503,8 @@ export const App: React.FC = () => {
               onSelectVideo={handleSelectVideo}
               onAdvanceToRecording={() => setCurrentStep('record')}
               isActive={currentStep === 'annotate'}
+              currentLayer={currentLayer}
+              setCurrentLayer={setCurrentLayer}
             />
           </div>
 
@@ -468,6 +520,9 @@ export const App: React.FC = () => {
               onOpenSettings={() => setIsSettingsOpen(true)}
               onAdvanceToExport={() => setCurrentStep('export')}
               isActive={currentStep === 'record'}
+              currentLayer={currentLayer}
+              setCurrentLayer={setCurrentLayer}
+              onBackToAnnotation={() => setCurrentStep('annotate')}
             />
           </div>
 
@@ -492,6 +547,15 @@ export const App: React.FC = () => {
         onUpdateSettings={(newSettings) =>
           setAudioSettings((prev) => ({ ...prev, ...newSettings }))
         }
+      />
+
+      {/* Save Project Modal (Choose Embed vs References) */}
+      <SaveProjectModal
+        isOpen={isSaveModalOpen}
+        onClose={() => setIsSaveModalOpen(false)}
+        onConfirm={handleConfirmSaveProject}
+        initialEmbedMedia={embedMedia}
+        projectName={currentProjectName}
       />
     </div>
   )
