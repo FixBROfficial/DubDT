@@ -43,12 +43,12 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
   // Mix Preview State & Refs
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const bgAudioRef = useRef<HTMLAudioElement | null>(null)
-  const takeAudioRef = useRef<HTMLAudioElement | null>(null)
+  // Map of active Audio players keyed by line.id to play multiple layers simultaneously
+  const activePlayersRef = useRef<Map<string, HTMLAudioElement>>(new Map())
 
   const [isPlaying, setIsPlaying] = useState<boolean>(false)
   const [currentTime, setCurrentTime] = useState<number>(0)
   const [duration, setDuration] = useState<number>(0)
-  const playingTakeLineIdRef = useRef<string | null>(null)
 
   const [selectedLayerExport, setSelectedLayerExport] = useState<number | 'all' | 'separate'>('all')
 
@@ -64,8 +64,8 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
       : exportSettings.customBgAudioPath
     : null
 
-  // Active dialogue line for real-time teleprompter overlay
-  const activeLine = lines.find(
+  // Active dialogue lines for real-time multi-layer subtitles
+  const activeLinesAtCurrentTime = lines.filter(
     (l) => currentTime >= l.startTime && currentTime <= l.endTime
   )
 
@@ -77,16 +77,33 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
     return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}.${String(ms).padStart(3, '0')}`
   }
 
+  // Stop and clean up all active take audio players
+  const stopAllTakeAudios = useCallback(() => {
+    activePlayersRef.current.forEach((audio) => {
+      try {
+        audio.pause()
+        audio.src = ''
+      } catch (e) {}
+    })
+    activePlayersRef.current.clear()
+  }, [])
+
   // Stop everything when tab becomes inactive
   useEffect(() => {
     if (isActive === false) {
       if (videoRef.current && !videoRef.current.paused) videoRef.current.pause()
       if (bgAudioRef.current && !bgAudioRef.current.paused) bgAudioRef.current.pause()
-      if (takeAudioRef.current && !takeAudioRef.current.paused) takeAudioRef.current.pause()
+      stopAllTakeAudios()
       setIsPlaying(false)
-      playingTakeLineIdRef.current = null
     }
-  }, [isActive])
+  }, [isActive, stopAllTakeAudios])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      stopAllTakeAudios()
+    }
+  }, [stopAllTakeAudios])
 
   // Update volume levels on existing players in real-time
   useEffect(() => {
@@ -98,9 +115,10 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
     if (bgAudioRef.current) {
       bgAudioRef.current.volume = exportSettings.customBgAudioVolume
     }
-    if (takeAudioRef.current) {
-      takeAudioRef.current.volume = Math.min(1.0, exportSettings.recordedVoicesVolume)
-    }
+    const voiceVol = Math.min(1.0, exportSettings.recordedVoicesVolume)
+    activePlayersRef.current.forEach((player) => {
+      player.volume = voiceVol
+    })
   }, [
     exportSettings.includeOriginalAudio,
     exportSettings.originalAudioVolume,
@@ -111,20 +129,28 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
   const togglePlay = useCallback(() => {
     if (!videoRef.current) return
 
-    if (isPlaying) {
+    if (isPlaying || !videoRef.current.paused) {
       videoRef.current.pause()
       if (bgAudioRef.current && !bgAudioRef.current.paused) bgAudioRef.current.pause()
-      if (takeAudioRef.current && !takeAudioRef.current.paused) takeAudioRef.current.pause()
+      activePlayersRef.current.forEach((player) => {
+        try { player.pause() } catch (e) {}
+      })
       setIsPlaying(false)
     } else {
       videoRef.current
         .play()
         .then(() => {
           setIsPlaying(true)
+          if (bgAudioRef.current && customBgMediaUrl && bgAudioRef.current.paused) {
+            bgAudioRef.current.play().catch(() => {})
+          }
+          activePlayersRef.current.forEach((player) => {
+            player.play().catch(() => {})
+          })
         })
         .catch(console.error)
     }
-  }, [isPlaying])
+  }, [isPlaying, customBgMediaUrl])
 
   // Keyboard shortcut: Space toggles mix preview when active
   useEffect(() => {
@@ -142,7 +168,7 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [isActive, togglePlay])
 
-  // Video timeupdate syncs all tracks (Original, M&E, Voice Takes)
+  // Video timeupdate syncs all tracks (Original, M&E, Multi-layer Voice Takes in parallel)
   const handleTimeUpdate = () => {
     if (!videoRef.current) return
     const vTime = videoRef.current.currentTime
@@ -170,55 +196,65 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
       }
     }
 
-    // 3. Sync Active Dialogue Line Take
-    const currentActiveLine = lines.find((l) => vTime >= l.startTime && vTime <= l.endTime)
+    // 3. Multi-layer Dialogue Takes Synchronization in parallel
+    // Find all lines across all layers that are active at this moment in time
+    const activeLines = lines.filter((l) => {
+      if (selectedLayerExport !== 'all' && selectedLayerExport !== 'separate') {
+        if ((l.layer || 1) !== selectedLayerExport) return false
+      }
+      return vTime >= l.startTime && vTime <= l.endTime && l.takes && l.takes.length > 0
+    })
 
-    if (currentActiveLine && currentActiveLine.takes && currentActiveLine.takes.length > 0) {
+    const activeLineIds = new Set(activeLines.map((l) => l.id))
+
+    // A. Stop and remove players for lines that have ended or are not currently active
+    activePlayersRef.current.forEach((audio, lineId) => {
+      if (!activeLineIds.has(lineId)) {
+        try {
+          audio.pause()
+          audio.src = ''
+        } catch (e) {}
+        activePlayersRef.current.delete(lineId)
+      }
+    })
+
+    // B. Start or synchronize players for each currently active line
+    const targetVoiceVol = Math.min(1.0, exportSettings.recordedVoicesVolume)
+    activeLines.forEach((line) => {
       const activeTake =
-        currentActiveLine.takes[currentActiveLine.activeTakeIndex || 0] || currentActiveLine.takes[0]
+        line.takes[line.activeTakeIndex || 0] || line.takes[0]
+      if (!activeTake || (!activeTake.audioBlobUrl && !activeTake.filePath)) return
 
-      if (activeTake && (activeTake.audioBlobUrl || activeTake.filePath)) {
-        const takeSrc =
-          activeTake.audioBlobUrl ||
-          (window.electronAPI ? window.electronAPI.convertToMediaUrl(activeTake.filePath) : '')
-        const takeOffset = Math.max(0, vTime - currentActiveLine.startTime)
+      const takeSrc =
+        activeTake.audioBlobUrl ||
+        (window.electronAPI ? window.electronAPI.convertToMediaUrl(activeTake.filePath) : '')
+      if (!takeSrc) return
 
-        if (takeAudioRef.current) {
-          takeAudioRef.current.volume = Math.min(1.0, exportSettings.recordedVoicesVolume)
+      const takeOffset = Math.max(0, vTime - line.startTime)
+      let player = activePlayersRef.current.get(line.id)
 
-          if (playingTakeLineIdRef.current !== currentActiveLine.id) {
-            playingTakeLineIdRef.current = currentActiveLine.id
-            if (takeAudioRef.current.src !== takeSrc) {
-              takeAudioRef.current.src = takeSrc
-            }
-            takeAudioRef.current.currentTime = takeOffset
-            if (!videoRef.current.paused) {
-              takeAudioRef.current.play().catch(() => {})
-            }
-          } else {
-            // Already active line, keep in sync
-            if (
-              !videoRef.current.paused &&
-              takeAudioRef.current.paused &&
-              takeOffset < (activeTake.duration || 10)
-            ) {
-              takeAudioRef.current.play().catch(() => {})
-            }
-            if (Math.abs(takeAudioRef.current.currentTime - takeOffset) > 0.15) {
-              takeAudioRef.current.currentTime = takeOffset
-            }
+      if (!player) {
+        player = new Audio(takeSrc)
+        player.volume = targetVoiceVol
+        player.currentTime = takeOffset
+        activePlayersRef.current.set(line.id, player)
+        if (!videoRef.current?.paused) {
+          player.play().catch(() => {})
+        }
+      } else {
+        player.volume = targetVoiceVol
+        if (!videoRef.current?.paused) {
+          if (player.paused && takeOffset < (activeTake.duration || 10)) {
+            player.play().catch(() => {})
           }
+        } else {
+          if (!player.paused) player.pause()
+        }
+        if (Math.abs(player.currentTime - takeOffset) > 0.15) {
+          player.currentTime = takeOffset
         }
       }
-    } else {
-      // Outside any dialogue line
-      if (playingTakeLineIdRef.current !== null) {
-        playingTakeLineIdRef.current = null
-        if (takeAudioRef.current && !takeAudioRef.current.paused) {
-          takeAudioRef.current.pause()
-        }
-      }
-    }
+    })
   }
 
   const handleSeek = (newTime: number) => {
@@ -230,30 +266,36 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
       bgAudioRef.current.currentTime = newTime
     }
 
-    // Check if newTime lands on a dialogue line
-    const currentActiveLine = lines.find((l) => newTime >= l.startTime && newTime <= l.endTime)
-    if (currentActiveLine && currentActiveLine.takes && currentActiveLine.takes.length > 0) {
+    // Stop existing voice players and re-sync for the new seek position
+    stopAllTakeAudios()
+
+    const activeLines = lines.filter((l) => {
+      if (selectedLayerExport !== 'all' && selectedLayerExport !== 'separate') {
+        if ((l.layer || 1) !== selectedLayerExport) return false
+      }
+      return newTime >= l.startTime && newTime <= l.endTime && l.takes && l.takes.length > 0
+    })
+
+    const targetVoiceVol = Math.min(1.0, exportSettings.recordedVoicesVolume)
+    activeLines.forEach((line) => {
       const activeTake =
-        currentActiveLine.takes[currentActiveLine.activeTakeIndex || 0] || currentActiveLine.takes[0]
-      if (activeTake && takeAudioRef.current) {
-        const takeSrc =
-          activeTake.audioBlobUrl ||
-          (window.electronAPI ? window.electronAPI.convertToMediaUrl(activeTake.filePath) : '')
-        if (takeAudioRef.current.src !== takeSrc) {
-          takeAudioRef.current.src = takeSrc
-        }
-        takeAudioRef.current.currentTime = Math.max(0, newTime - currentActiveLine.startTime)
-        playingTakeLineIdRef.current = currentActiveLine.id
-        if (!videoRef.current.paused) {
-          takeAudioRef.current.play().catch(() => {})
-        }
+        line.takes[line.activeTakeIndex || 0] || line.takes[0]
+      if (!activeTake || (!activeTake.audioBlobUrl && !activeTake.filePath)) return
+
+      const takeSrc =
+        activeTake.audioBlobUrl ||
+        (window.electronAPI ? window.electronAPI.convertToMediaUrl(activeTake.filePath) : '')
+      if (!takeSrc) return
+
+      const takeOffset = Math.max(0, newTime - line.startTime)
+      const player = new Audio(takeSrc)
+      player.volume = targetVoiceVol
+      player.currentTime = takeOffset
+      activePlayersRef.current.set(line.id, player)
+      if (!videoRef.current?.paused) {
+        player.play().catch(() => {})
       }
-    } else {
-      if (takeAudioRef.current && !takeAudioRef.current.paused) {
-        takeAudioRef.current.pause()
-      }
-      playingTakeLineIdRef.current = null
-    }
+    })
   }
 
   const handleRewind = () => {
@@ -641,14 +683,21 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
 
               {/* Hidden Synced Audio Players */}
               {customBgMediaUrl && <audio ref={bgAudioRef} src={customBgMediaUrl} preload="auto" />}
-              <audio ref={takeAudioRef} preload="auto" />
 
               {/* Live Subtitle Overlay */}
-              {activeLine && (
-                <div className="absolute bottom-3 inset-x-4 text-center pointer-events-none select-none z-10 animate-in fade-in duration-75">
-                  <span className="inline-block bg-black/85 backdrop-blur-sm text-yellow-300 font-medium px-3.5 py-1 rounded text-xs sm:text-sm border border-yellow-500/30 shadow-2xl max-w-xl truncate">
-                    "{activeLine.text}"
-                  </span>
+              {activeLinesAtCurrentTime.length > 0 && (
+                <div className="absolute bottom-3 inset-x-4 flex flex-col items-center gap-1.5 pointer-events-none select-none z-10 animate-in fade-in duration-75">
+                  {activeLinesAtCurrentTime.map((line) => (
+                    <div
+                      key={line.id}
+                      className="inline-flex items-center gap-2 bg-black/85 backdrop-blur-sm text-yellow-300 font-medium px-3.5 py-1 rounded text-xs sm:text-sm border border-yellow-500/30 shadow-2xl max-w-xl"
+                    >
+                      <span className="font-mono text-[10px] text-zinc-400 bg-zinc-800/90 px-1.5 py-0.5 rounded">
+                        C{line.layer || 1}
+                      </span>
+                      <span className="truncate">"{line.text}"</span>
+                    </div>
+                  ))}
                 </div>
               )}
 

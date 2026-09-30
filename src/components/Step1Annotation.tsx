@@ -154,7 +154,7 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
       try {
         wsRegions.clearRegions()
 
-        // 1. Active layer regions: fully editable and interactive
+        // Active layer regions: fully editable and interactive
         const activeLayerLines = allLines.filter((l) => (l.layer || 1) === layer)
         activeLayerLines.forEach((l) => {
           const reg = wsRegions.addRegion({
@@ -167,24 +167,6 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
             resize: true,
           })
           attachRegionContextMenu(reg)
-        })
-
-        // 2. Ghost markers for other layers: faint, non-interactive visual guide
-        const otherLayerLines = allLines.filter((l) => (l.layer || 1) !== layer)
-        otherLayerLines.forEach((l) => {
-          const reg = wsRegions.addRegion({
-            id: `ghost_${l.id}`,
-            start: l.startTime,
-            end: l.endTime,
-            content: `[C${l.layer || 1}] ${l.text}`,
-            color: 'rgba(100, 116, 139, 0.08)',
-            drag: false,
-            resize: false,
-          })
-          if (reg.element) {
-            reg.element.style.pointerEvents = 'none'
-            reg.element.style.opacity = '0.5'
-          }
         })
       } finally {
         isSyncingRegionsRef.current = false
