@@ -12,6 +12,7 @@ import {
   ChevronDown,
   ChevronRight,
   X,
+  AlertTriangle,
 } from 'lucide-react'
 
 interface NavbarProps {
@@ -33,6 +34,9 @@ interface NavbarProps {
   currentLayer: number
   onLayerChange: (layer: number) => void
   linesCountByLayer?: Record<number, number>
+  isVideoMissing?: boolean
+  missingVideoName?: string | null
+  onOpenRelinkModal?: () => void
 }
 
 export const Navbar: React.FC<NavbarProps> = ({
@@ -54,6 +58,9 @@ export const Navbar: React.FC<NavbarProps> = ({
   currentLayer,
   onLayerChange,
   linesCountByLayer = {},
+  isVideoMissing = false,
+  missingVideoName = null,
+  onOpenRelinkModal,
 }) => {
   const [isProjectMenuOpen, setIsProjectMenuOpen] = useState(false)
   const [showRecentsMenu, setShowRecentsMenu] = useState(false)
@@ -240,19 +247,47 @@ export const Navbar: React.FC<NavbarProps> = ({
                 <X className="w-3.5 h-3.5" />
                 <span>Fechar Projeto</span>
               </button>
+
+              {isVideoMissing && onOpenRelinkModal && (
+                <>
+                  <div className="h-px bg-zinc-900 my-1" />
+                  <button
+                    onClick={() => {
+                      setIsProjectMenuOpen(false)
+                      onOpenRelinkModal()
+                    }}
+                    className="w-full flex items-center gap-2 px-3 py-1.5 text-amber-400 hover:bg-amber-950/40 hover:text-amber-300 transition-colors cursor-pointer"
+                  >
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    <span>Localizar Vídeo no Explorer...</span>
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
 
-        {videoName && (
+        {/* Missing Video Alert Button or Normal Video Label */}
+        {isVideoMissing ? (
+          <button
+            onClick={onOpenRelinkModal}
+            className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded bg-amber-950/70 border border-amber-700/80 text-amber-300 hover:bg-amber-900/80 hover:text-white transition-all pl-2.5 max-w-[260px] truncate cursor-pointer shadow-sm animate-pulse"
+            title="Vídeo não encontrado no disco. Clique para localizar no Explorer."
+          >
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span className="truncate font-mono text-[11px]">
+              Vídeo Ausente: {missingVideoName || 'Localizar'}
+            </span>
+          </button>
+        ) : videoName ? (
           <div className="flex items-center gap-1.5 text-xs text-zinc-400 pl-3 border-l border-zinc-900 max-w-[200px] truncate">
             <Film className="w-3 h-3 text-zinc-500 shrink-0" />
             <span className="truncate text-zinc-400 font-mono text-[11px]">{videoName}</span>
           </div>
-        )}
+        ) : null}
 
         {/* Global Layer Switcher (only shown when a video/project is active) */}
-        {(videoName || linesCount > 0) && (
+        {(videoName || linesCount > 0 || isVideoMissing) && (
           <div className="pl-2 border-l border-zinc-900">
             <LayerSelector
               currentLayer={currentLayer}

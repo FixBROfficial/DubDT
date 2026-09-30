@@ -262,9 +262,26 @@ app.on('window-all-closed', () => {
 // --- IPC Handlers ---
 
 // 1. Select Video
-ipcMain.handle('dialog:selectVideoFile', async () => {
+ipcMain.handle('dialog:selectVideoFile', async (_, options = {}) => {
+  let defaultPath = options?.defaultPath
+  if (defaultPath && typeof defaultPath === 'string') {
+    try {
+      if (!fs.existsSync(defaultPath)) {
+        const parent = path.dirname(defaultPath)
+        if (fs.existsSync(parent)) {
+          defaultPath = parent
+        } else {
+          defaultPath = undefined
+        }
+      }
+    } catch (e) {
+      defaultPath = undefined
+    }
+  }
+
   const result = await dialog.showOpenDialog(mainWindow, {
-    title: 'Selecione o vídeo para dublar',
+    title: options?.title || 'Selecione o vídeo para dublar',
+    defaultPath,
     properties: ['openFile'],
     filters: [
       { name: 'Vídeos', extensions: ['mp4', 'mkv', 'webm', 'mov', 'avi', 'm4v'] },
@@ -606,10 +623,16 @@ ipcMain.handle('project:load', async (_, filePath) => {
       if (project.videoPath) {
         if (fs.existsSync(project.videoPath)) {
           project.videoMediaUrl = pathToMediaUrl(project.videoPath)
+          project.videoMissing = false
         } else {
           warnings.push(`Arquivo de vídeo não encontrado no caminho original: ${project.videoPath}`)
+          project.videoMissing = true
+          project.missingVideoPath = project.videoPath
+          project.missingVideoName = project.videoName || path.basename(project.videoPath)
           project.videoMediaUrl = null
         }
+      } else {
+        project.videoMissing = false
       }
 
       if (project.customBgAudioPath) {
@@ -678,19 +701,29 @@ ipcMain.handle('project:load', async (_, filePath) => {
           project.videoPath = extractedVideoPath
           project.videoMediaUrl = pathToMediaUrl(extractedVideoPath)
           project.videoName = project.videoOriginalName || path.basename(extractedVideoPath)
+          project.videoMissing = false
         } else {
           warnings.push('Vídeo não encontrado dentro do pacote do projeto.')
           project.videoPath = null
           project.videoMediaUrl = null
+          project.videoMissing = true
+          project.missingVideoName = project.videoOriginalName || project.videoFileName
+          project.missingVideoPath = null
         }
       } else if (project.videoPath) {
         if (fs.existsSync(project.videoPath)) {
           project.videoMediaUrl = pathToMediaUrl(project.videoPath)
           project.videoName = project.videoOriginalName || project.videoName || path.basename(project.videoPath)
+          project.videoMissing = false
         } else {
           warnings.push(`Vídeo referenciado não encontrado no caminho original: ${project.videoPath}`)
+          project.videoMissing = true
+          project.missingVideoPath = project.videoPath
+          project.missingVideoName = project.videoOriginalName || project.videoName || path.basename(project.videoPath)
           project.videoMediaUrl = null
         }
+      } else {
+        project.videoMissing = false
       }
 
       // Locate custom background audio (embedded or referenced)

@@ -1,5 +1,5 @@
 export interface ElectronAPI {
-  selectVideoFile: () => Promise<{ path: string; name: string; mediaUrl: string } | null>
+  selectVideoFile: (options?: { title?: string; defaultPath?: string }) => Promise<{ path: string; name: string; mediaUrl: string } | null>
   selectAudioFile: () => Promise<{ path: string; name: string; mediaUrl: string } | null>
   selectDirectory: () => Promise<string | null>
   saveFileDialog: (options: { title?: string; defaultPath?: string; filters?: Array<{ name: string; extensions: string[] }> }) => Promise<string | null>

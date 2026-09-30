@@ -67,4 +67,7 @@ export interface DubDTProject {
   exportSettings: ExportSettings
   embedMedia?: boolean
   currentLayer?: number
+  videoMissing?: boolean
+  missingVideoName?: string | null
+  missingVideoPath?: string | null
 }

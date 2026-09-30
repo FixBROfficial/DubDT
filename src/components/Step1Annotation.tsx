@@ -15,6 +15,8 @@ import {
   ZoomIn,
   ZoomOut,
   Layers,
+  AlertTriangle,
+  FolderOpen,
 } from 'lucide-react'
 
 interface Step1AnnotationProps {
@@ -28,6 +30,10 @@ interface Step1AnnotationProps {
   isActive?: boolean
   currentLayer: number
   setCurrentLayer: (layer: number | ((prev: number) => number)) => void
+  isVideoMissing?: boolean
+  missingVideoName?: string | null
+  missingVideoPath?: string | null
+  onRelinkVideo?: () => void
 }
 
 export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
@@ -41,6 +47,10 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   isActive = true,
   currentLayer,
   setCurrentLayer,
+  isVideoMissing = false,
+  missingVideoName = null,
+  missingVideoPath = null,
+  onRelinkVideo,
 }) => {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const waveformContainerRef = useRef<HTMLDivElement | null>(null)
@@ -656,21 +666,69 @@ export const Step1Annotation: React.FC<Step1AnnotationProps> = ({
   return (
     <div className="flex-1 flex flex-col h-[calc(100vh-3rem)] overflow-hidden bg-[#050505]">
       {!videoMediaUrl ? (
-        <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
-          <div className="w-12 h-12 border border-zinc-800 rounded-md flex items-center justify-center mb-4 text-zinc-400">
-            <Upload className="w-5 h-5" />
+        isVideoMissing || lines.length > 0 ? (
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center max-w-lg mx-auto">
+            <div className="w-14 h-14 bg-amber-500/10 border border-amber-500/30 rounded-2xl flex items-center justify-center mb-4 text-amber-400 shadow-xl">
+              <AlertTriangle className="w-7 h-7" />
+            </div>
+            <h2 className="text-base font-semibold text-white mb-1">Vídeo do Projeto Não Encontrado</h2>
+            <p className="text-xs text-zinc-400 max-w-md mb-4 leading-relaxed">
+              O projeto possui marcações e falas salvas, mas o arquivo de vídeo original não está acessível no caminho registrado. Você pode marcar onde o arquivo está no Explorer e abrir para continuar seu trabalho.
+            </p>
+
+            <div className="w-full bg-zinc-900/90 border border-zinc-800 rounded-lg p-3.5 text-left mb-5 space-y-2 shadow-inner">
+              <div className="flex items-center justify-between text-xs">
+                <span className="text-zinc-500">Nome esperado:</span>
+                <span className="font-mono text-zinc-200 font-semibold truncate max-w-[280px]">
+                  {missingVideoName || videoName || 'Vídeo original'}
+                </span>
+              </div>
+              {missingVideoPath && (
+                <div className="flex items-start justify-between text-[11px] gap-2 pt-2 border-t border-zinc-800/60">
+                  <span className="text-zinc-500 shrink-0">Caminho original:</span>
+                  <span className="font-mono text-zinc-400 break-all text-right">
+                    {missingVideoPath}
+                  </span>
+                </div>
+              )}
+            </div>
+
+            <div className="flex flex-col sm:flex-row items-center gap-2.5">
+              {onRelinkVideo && (
+                <button
+                  onClick={onRelinkVideo}
+                  className="px-4 py-2.5 bg-white text-black hover:bg-zinc-200 text-xs font-semibold rounded-md shadow-lg transition-all flex items-center gap-2 cursor-pointer ring-1 ring-white/20"
+                >
+                  <FolderOpen className="w-4 h-4" />
+                  Localizar Vídeo no Explorer
+                </button>
+              )}
+
+              <button
+                onClick={onSelectVideo}
+                className="px-3.5 py-2.5 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-900 border border-zinc-800 text-xs font-medium rounded-md transition-colors cursor-pointer"
+              >
+                Trocar por Novo Vídeo
+              </button>
+            </div>
           </div>
-          <h2 className="text-sm font-semibold text-white mb-1">Selecione o vídeo para dublagem</h2>
-          <p className="text-xs text-zinc-500 max-w-sm mb-5">
-            Formatos suportados: MP4, MKV, WebM, MOV, AVI.
-          </p>
-          <button
-            onClick={onSelectVideo}
-            className="px-4 py-2 bg-white text-black hover:bg-zinc-200 text-xs font-medium rounded transition-colors"
-          >
-            Selecionar Vídeo
-          </button>
-        </div>
+        ) : (
+          <div className="flex-1 flex flex-col items-center justify-center p-8 text-center">
+            <div className="w-12 h-12 border border-zinc-800 rounded-md flex items-center justify-center mb-4 text-zinc-400">
+              <Upload className="w-5 h-5" />
+            </div>
+            <h2 className="text-sm font-semibold text-white mb-1">Selecione o vídeo para dublagem</h2>
+            <p className="text-xs text-zinc-500 max-w-sm mb-5">
+              Formatos suportados: MP4, MKV, WebM, MOV, AVI.
+            </p>
+            <button
+              onClick={onSelectVideo}
+              className="px-4 py-2 bg-white text-black hover:bg-zinc-200 text-xs font-medium rounded transition-colors"
+            >
+              Selecionar Vídeo
+            </button>
+          </div>
+        )
       ) : (
         <div className="flex-1 flex overflow-hidden">
           {/* Main Area: Video & Waveform */}

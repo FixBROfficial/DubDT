@@ -13,6 +13,8 @@ import {
   Trash2,
   Check,
   Layers,
+  AlertTriangle,
+  FolderOpen,
 } from 'lucide-react'
 
 interface Step2RecordingProps {
@@ -27,6 +29,8 @@ interface Step2RecordingProps {
   currentLayer: number
   setCurrentLayer: (layer: number | ((prev: number) => number)) => void
   onBackToAnnotation?: () => void
+  isVideoMissing?: boolean
+  onRelinkVideo?: () => void
 }
 
 export const Step2Recording: React.FC<Step2RecordingProps> = ({
@@ -41,6 +45,8 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
   currentLayer,
   setCurrentLayer,
   onBackToAnnotation,
+  isVideoMissing = false,
+  onRelinkVideo,
 }) => {
   const [filterMode, setFilterMode] = useState<'layer' | 'all'>('layer')
   const [currentLineIndex, setCurrentLineIndex] = useState<number>(0)
@@ -614,18 +620,56 @@ export const Step2Recording: React.FC<Step2RecordingProps> = ({
         </div>
       </div>
 
+      {/* Missing Video Alert Banner if video is not connected */}
+      {isVideoMissing && (
+        <div className="bg-amber-950/60 border-b border-amber-800/80 px-4 py-1.5 flex items-center justify-between text-xs text-amber-200">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+            <span className="text-[11px]">Vídeo não encontrado no disco. Você pode gravar ouvindo o metrônomo ou localizar o arquivo no Explorer.</span>
+          </div>
+          {onRelinkVideo && (
+            <button
+              onClick={onRelinkVideo}
+              className="px-2 py-0.5 bg-amber-400 text-black font-semibold text-[10px] rounded hover:bg-amber-300 transition-colors shrink-0 flex items-center gap-1 cursor-pointer"
+            >
+              <FolderOpen className="w-3 h-3" />
+              Localizar Vídeo
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Main Studio Center */}
       <div className="flex-1 flex overflow-hidden">
         {/* Left Column: Video & Big Teleprompter */}
         <div className="flex-1 flex flex-col border-r border-zinc-900 bg-black overflow-hidden relative">
           <div className="flex-1 bg-black flex items-center justify-center relative overflow-hidden p-2 min-h-0">
-            <video
-              ref={videoRef}
-              src={videoMediaUrl}
-              onTimeUpdate={handleVideoTimeUpdate}
-              onLoadedMetadata={() => seekToCurrentLine()}
-              className="max-h-full max-w-full rounded object-contain"
-            />
+            {videoMediaUrl ? (
+              <video
+                ref={videoRef}
+                src={videoMediaUrl}
+                onTimeUpdate={handleVideoTimeUpdate}
+                onLoadedMetadata={() => seekToCurrentLine()}
+                className="max-h-full max-w-full rounded object-contain"
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center p-6 text-center text-zinc-500 max-w-sm">
+                <AlertTriangle className="w-8 h-8 text-amber-400 mb-2" />
+                <span className="text-xs font-semibold text-zinc-300 mb-1">Vídeo não conectado</span>
+                <p className="text-[11px] text-zinc-500 mb-3">
+                  O vídeo original deste projeto não foi localizado. Você pode gravar com o metrônomo ou localizar o arquivo.
+                </p>
+                {onRelinkVideo && (
+                  <button
+                    onClick={onRelinkVideo}
+                    className="px-3 py-1.5 bg-white text-black hover:bg-zinc-200 text-xs font-semibold rounded shadow transition-colors flex items-center gap-1.5 cursor-pointer"
+                  >
+                    <FolderOpen className="w-3.5 h-3.5" />
+                    Localizar no Explorer
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Flat Minimal Countdown Overlay */}
             {isCountingDown && (

@@ -6,6 +6,7 @@ import { Step2Recording } from './components/Step2Recording'
 import { Step3Export } from './components/Step3Export'
 import { AudioSettingsModal } from './components/AudioSettingsModal'
 import { SaveProjectModal } from './components/SaveProjectModal'
+import { RelinkVideoModal } from './components/RelinkVideoModal'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { CheckCircle2, AlertTriangle, Info, X } from 'lucide-react'
 
@@ -42,6 +43,12 @@ export const App: React.FC = () => {
   const [videoPath, setVideoPath] = useState<string | null>(null)
   const [videoMediaUrl, setVideoMediaUrl] = useState<string | null>(null)
   const [videoName, setVideoName] = useState<string | null>(null)
+
+  // Missing Video Relinking State
+  const [isVideoMissing, setIsVideoMissing] = useState<boolean>(false)
+  const [missingVideoName, setMissingVideoName] = useState<string | null>(null)
+  const [missingVideoPath, setMissingVideoPath] = useState<string | null>(null)
+  const [isRelinkModalOpen, setIsRelinkModalOpen] = useState<boolean>(false)
 
   // Dialogue lines
   const [lines, setLines] = useState<DialogueLine[]>([])
@@ -130,6 +137,10 @@ export const App: React.FC = () => {
     setVideoPath(null)
     setVideoMediaUrl(null)
     setVideoName(null)
+    setIsVideoMissing(false)
+    setMissingVideoName(null)
+    setMissingVideoPath(null)
+    setIsRelinkModalOpen(false)
     setLines([])
     setExportSettings(initialExportSettings)
     setCurrentProjectPath(null)
@@ -251,13 +262,40 @@ export const App: React.FC = () => {
         const projectName =
           filePath.split(/[\\/]/).pop()?.replace(/\.dubdt$/i, '') || project.name || 'Projeto'
 
-        // Restore video
-        setVideoPath(project.videoPath || null)
-        setVideoMediaUrl((project as any).videoMediaUrl || null)
-        setVideoName(
-          project.videoName ||
-            (project.videoPath ? project.videoPath.split(/[\\/]/).pop() : null)
+        // Restore or detect missing video
+        const isMissing = Boolean(
+          project.videoMissing ||
+          (!(project as any).videoMediaUrl && (project.videoPath || project.videoFileName || project.videoName || project.videoOriginalName))
         )
+
+        const origName =
+          project.missingVideoName ||
+          project.videoOriginalName ||
+          project.videoName ||
+          (project.videoPath ? project.videoPath.split(/[\\/]/).pop() : null) ||
+          'Vídeo original'
+
+        const origPath = project.missingVideoPath || project.videoPath || ''
+
+        if (isMissing) {
+          setIsVideoMissing(true)
+          setMissingVideoName(origName)
+          setMissingVideoPath(origPath)
+          setVideoPath(null)
+          setVideoMediaUrl(null)
+          setVideoName(origName)
+          setIsRelinkModalOpen(true)
+        } else {
+          setIsVideoMissing(false)
+          setMissingVideoName(null)
+          setMissingVideoPath(null)
+          setVideoPath(project.videoPath || null)
+          setVideoMediaUrl((project as any).videoMediaUrl || null)
+          setVideoName(
+            project.videoName ||
+              (project.videoPath ? project.videoPath.split(/[\\/]/).pop() : null)
+          )
+        }
 
         // Restore lines
         setLines(project.lines || [])
@@ -337,6 +375,10 @@ export const App: React.FC = () => {
     setVideoPath(null)
     setVideoMediaUrl(null)
     setVideoName(null)
+    setIsVideoMissing(false)
+    setMissingVideoName(null)
+    setMissingVideoPath(null)
+    setIsRelinkModalOpen(false)
     setLines([])
     setExportSettings(initialExportSettings)
     setCurrentProjectPath(null)
@@ -392,7 +434,19 @@ export const App: React.FC = () => {
     exportSettings,
   ])
 
-  // Select video handler
+  // Relink missing project video (preserves lines, takes and settings)
+  const handleRelinkVideo = (selectedFile: { path: string; name: string; mediaUrl: string }) => {
+    setVideoPath(selectedFile.path)
+    setVideoMediaUrl(selectedFile.mediaUrl)
+    setVideoName(selectedFile.name)
+    setIsVideoMissing(false)
+    setMissingVideoName(null)
+    setMissingVideoPath(null)
+    setIsRelinkModalOpen(false)
+    showNotification(`Vídeo "${selectedFile.name}" reconectado com sucesso!`, 'success')
+  }
+
+  // Select video handler (starts new video annotations from scratch)
   const handleSelectVideo = async () => {
     if (window.electronAPI) {
       try {
@@ -401,6 +455,10 @@ export const App: React.FC = () => {
           setVideoPath(file.path)
           setVideoMediaUrl(file.mediaUrl)
           setVideoName(file.name)
+          setIsVideoMissing(false)
+          setMissingVideoName(null)
+          setMissingVideoPath(null)
+          setIsRelinkModalOpen(false)
           setLines([]) // reset lines for new video
           setExportSettings((prev) => ({ ...prev, customBgAudioPath: null })) // reset M&E for new video
           showNotification(`Vídeo carregado: ${file.name}`, 'info')
@@ -473,6 +531,9 @@ export const App: React.FC = () => {
         currentLayer={currentLayer}
         onLayerChange={setCurrentLayer}
         linesCountByLayer={linesCountByLayer}
+        isVideoMissing={isVideoMissing}
+        missingVideoName={missingVideoName}
+        onOpenRelinkModal={() => setIsRelinkModalOpen(true)}
       />
 
       {/* Floating Notification Toast */}
@@ -516,6 +577,10 @@ export const App: React.FC = () => {
               isActive={currentStep === 'annotate'}
               currentLayer={currentLayer}
               setCurrentLayer={setCurrentLayer}
+              isVideoMissing={isVideoMissing}
+              missingVideoName={missingVideoName}
+              missingVideoPath={missingVideoPath}
+              onRelinkVideo={() => setIsRelinkModalOpen(true)}
             />
           </div>
 
@@ -534,6 +599,8 @@ export const App: React.FC = () => {
               currentLayer={currentLayer}
               setCurrentLayer={setCurrentLayer}
               onBackToAnnotation={() => setCurrentStep('annotate')}
+              isVideoMissing={isVideoMissing}
+              onRelinkVideo={() => setIsRelinkModalOpen(true)}
             />
           </div>
 
@@ -545,6 +612,9 @@ export const App: React.FC = () => {
               exportSettings={exportSettings}
               setExportSettings={setExportSettings}
               isActive={currentStep === 'export'}
+              isVideoMissing={isVideoMissing}
+              missingVideoName={missingVideoName}
+              onRelinkVideo={() => setIsRelinkModalOpen(true)}
             />
           </div>
         </ErrorBoundary>
@@ -567,6 +637,15 @@ export const App: React.FC = () => {
         onConfirm={handleConfirmSaveProject}
         initialEmbedMedia={embedMedia}
         projectName={currentProjectName}
+      />
+
+      {/* Relink Missing Video Modal */}
+      <RelinkVideoModal
+        isOpen={isRelinkModalOpen}
+        onClose={() => setIsRelinkModalOpen(false)}
+        expectedVideoName={missingVideoName}
+        originalVideoPath={missingVideoPath}
+        onRelink={handleRelinkVideo}
       />
     </div>
   )

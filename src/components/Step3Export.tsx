@@ -17,6 +17,8 @@ import {
   Disc,
   Layers,
   Trash2,
+  AlertTriangle,
+  FolderOpen,
 } from 'lucide-react'
 
 interface Step3ExportProps {
@@ -26,6 +28,9 @@ interface Step3ExportProps {
   exportSettings: ExportSettings
   setExportSettings: React.Dispatch<React.SetStateAction<ExportSettings>>
   isActive?: boolean
+  isVideoMissing?: boolean
+  missingVideoName?: string | null
+  onRelinkVideo?: () => void
 }
 
 export const Step3Export: React.FC<Step3ExportProps> = ({
@@ -35,6 +40,9 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
   exportSettings,
   setExportSettings,
   isActive = true,
+  isVideoMissing = false,
+  missingVideoName = null,
+  onRelinkVideo,
 }) => {
   const [isExporting, setIsExporting] = useState<boolean>(false)
   const [exportProgressText, setExportProgressText] = useState<string>('')
@@ -797,8 +805,25 @@ export const Step3Export: React.FC<Step3ExportProps> = ({
             </div>
           </div>
         ) : (
-          <div className="p-6 bg-zinc-950 border border-zinc-900 rounded-lg text-center text-xs text-zinc-600">
-            Nenhum vídeo selecionado para mixagem.
+          <div className="p-6 bg-zinc-950 border border-zinc-800 rounded-lg text-center space-y-3">
+            <div className="w-10 h-10 rounded-full bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 mx-auto">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-white">Vídeo Não Conectado</h3>
+              <p className="text-xs text-zinc-400 max-w-sm mx-auto mt-1">
+                Para pré-visualizar a mixagem completa e renderizar o vídeo final, localize o arquivo de vídeo original no Explorer.
+              </p>
+            </div>
+            {onRelinkVideo && (
+              <button
+                onClick={onRelinkVideo}
+                className="px-4 py-2 bg-white text-black hover:bg-zinc-200 text-xs font-semibold rounded-md shadow transition-colors inline-flex items-center gap-2 cursor-pointer"
+              >
+                <FolderOpen className="w-4 h-4" />
+                Localizar Vídeo no Explorer
+              </button>
+            )}
           </div>
         )}
 

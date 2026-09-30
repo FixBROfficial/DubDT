@@ -3,7 +3,7 @@ const { pathToFileURL } = require('url')
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Dialogs
-  selectVideoFile: () => ipcRenderer.invoke('dialog:selectVideoFile'),
+  selectVideoFile: (options) => ipcRenderer.invoke('dialog:selectVideoFile', options),
   selectAudioFile: () => ipcRenderer.invoke('dialog:selectAudioFile'),
   selectDirectory: () => ipcRenderer.invoke('dialog:selectDirectory'),
   saveFileDialog: (options) => ipcRenderer.invoke('dialog:saveFile', options),
