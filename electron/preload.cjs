@@ -20,6 +20,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   exportClips: (options) => ipcRenderer.invoke('ffmpeg:exportClips', options),
   exportScriptTxt: (filePath, lines) => ipcRenderer.invoke('fs:exportScriptTxt', { filePath, lines }),
 
+  // Projects
+  selectProjectFileToOpen: () => ipcRenderer.invoke('dialog:selectProjectFileToOpen'),
+  selectProjectFileToSave: (defaultName) => ipcRenderer.invoke('dialog:selectProjectFileToSave', defaultName),
+  saveProjectFile: (filePath, data) => ipcRenderer.invoke('project:save', { filePath, data }),
+  loadProjectFile: (filePath) => ipcRenderer.invoke('project:load', filePath),
+  getRecentProjects: () => ipcRenderer.invoke('project:getRecents'),
+  clearRecentProjects: () => ipcRenderer.invoke('project:clearRecents'),
+  setWindowTitle: (title) => ipcRenderer.invoke('window:setTitle', title),
+
   // Platform & paths
   convertToMediaUrl: (filePath) => {
     if (!filePath) return ''

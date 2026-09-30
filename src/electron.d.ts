@@ -9,6 +9,13 @@ export interface ElectronAPI {
   exportMix: (options: any) => Promise<{ success: boolean; outputPath: string }>
   exportClips: (options: any) => Promise<{ success: boolean; count: number; files: string[] }>
   exportScriptTxt: (filePath: string, lines: any[]) => Promise<boolean>
+  selectProjectFileToOpen: () => Promise<string | null>
+  selectProjectFileToSave: (defaultName?: string) => Promise<string | null>
+  saveProjectFile: (filePath: string, data: any) => Promise<{ success: boolean; filePath: string }>
+  loadProjectFile: (filePath: string) => Promise<{ success: boolean; data: any; warnings?: string[] }>
+  getRecentProjects: () => Promise<Array<{ path: string; name: string; lastOpened: number }>>
+  clearRecentProjects: () => Promise<boolean>
+  setWindowTitle: (title: string) => Promise<void>
   convertToMediaUrl: (filePath: string) => string
 }
 

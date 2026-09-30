@@ -245,6 +245,150 @@ ipcMain.handle('dialog:saveFile', async (_, options) => {
   return result.filePath
 })
 
+// --- Project Persistence & Recents ---
+function getRecentProjectsPath() {
+  return path.join(app.getPath('userData'), 'recent_projects.json')
+}
+
+function loadRecentProjects() {
+  try {
+    const p = getRecentProjectsPath()
+    if (fs.existsSync(p)) {
+      return JSON.parse(fs.readFileSync(p, 'utf-8'))
+    }
+  } catch (e) {}
+  return []
+}
+
+function saveRecentProjects(list) {
+  try {
+    fs.writeFileSync(getRecentProjectsPath(), JSON.stringify(list, null, 2), 'utf-8')
+  } catch (e) {}
+}
+
+function addRecentProject(projectPath) {
+  try {
+    let list = loadRecentProjects()
+    list = list.filter((item) => item.path.toLowerCase() !== projectPath.toLowerCase())
+    list.unshift({
+      path: projectPath,
+      name: path.basename(projectPath, path.extname(projectPath)) || path.basename(projectPath),
+      lastOpened: Date.now(),
+    })
+    if (list.length > 10) list = list.slice(0, 10)
+    saveRecentProjects(list)
+  } catch (e) {}
+}
+
+ipcMain.handle('dialog:selectProjectFileToOpen', async () => {
+  const result = await dialog.showOpenDialog(mainWindow, {
+    title: 'Abrir Projeto DubDT',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Projetos DubDT (*.dubdt)', extensions: ['dubdt'] },
+      { name: 'Todos os arquivos', extensions: ['*'] },
+    ],
+  })
+  if (result.canceled || result.filePaths.length === 0) return null
+  return result.filePaths[0]
+})
+
+ipcMain.handle('dialog:selectProjectFileToSave', async (_, defaultName) => {
+  const result = await dialog.showSaveDialog(mainWindow, {
+    title: 'Salvar Projeto DubDT',
+    defaultPath: defaultName || 'MeuProjeto.dubdt',
+    filters: [
+      { name: 'Projetos DubDT (*.dubdt)', extensions: ['dubdt'] },
+    ],
+  })
+  if (result.canceled || !result.filePath) return null
+  let filePath = result.filePath
+  if (!filePath.toLowerCase().endsWith('.dubdt')) {
+    filePath += '.dubdt'
+  }
+  return filePath
+})
+
+ipcMain.handle('project:save', async (_, { filePath, data }) => {
+  try {
+    fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8')
+    addRecentProject(filePath)
+    return { success: true, filePath }
+  } catch (err) {
+    console.error('Erro ao salvar arquivo de projeto:', err)
+    throw err
+  }
+})
+
+ipcMain.handle('project:load', async (_, filePath) => {
+  try {
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`Arquivo de projeto não encontrado: ${filePath}`)
+    }
+    const content = fs.readFileSync(filePath, 'utf-8')
+    const project = JSON.parse(content)
+    addRecentProject(filePath)
+
+    const warnings = []
+
+    // Verify video file exists & generate mediaUrl
+    if (project.videoPath) {
+      if (fs.existsSync(project.videoPath)) {
+        project.videoMediaUrl = pathToMediaUrl(project.videoPath)
+      } else {
+        warnings.push(`Arquivo de vídeo não encontrado no caminho: ${project.videoPath}`)
+        project.videoMediaUrl = null
+      }
+    }
+
+    // Verify custom M&E background audio
+    if (project.customBgAudioPath) {
+      if (fs.existsSync(project.customBgAudioPath)) {
+        project.customBgAudioMediaUrl = pathToMediaUrl(project.customBgAudioPath)
+      } else {
+        warnings.push(`Trilha de áudio M&E não encontrada: ${project.customBgAudioPath}`)
+      }
+    }
+
+    // Verify take audio files
+    if (Array.isArray(project.lines)) {
+      for (const line of project.lines) {
+        if (Array.isArray(line.takes)) {
+          for (const take of line.takes) {
+            if (take.filePath) {
+              if (fs.existsSync(take.filePath)) {
+                take.audioBlobUrl = pathToMediaUrl(take.filePath)
+              } else {
+                warnings.push(`Gravação não encontrada: ${take.filePath}`)
+              }
+            }
+          }
+        }
+      }
+    }
+
+    return { success: true, data: project, warnings }
+  } catch (err) {
+    console.error('Erro ao abrir arquivo de projeto:', err)
+    throw err
+  }
+})
+
+ipcMain.handle('project:getRecents', async () => {
+  return loadRecentProjects()
+})
+
+ipcMain.handle('project:clearRecents', async () => {
+  saveRecentProjects([])
+  return true
+})
+
+ipcMain.handle('window:setTitle', async (_, title) => {
+  if (mainWindow) {
+    mainWindow.setTitle(title)
+  }
+})
+
 const peaksCache = new Map()
 
 function getVideoDuration(filePath) {

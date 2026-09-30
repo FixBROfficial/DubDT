@@ -43,3 +43,22 @@ export interface ExportSettings {
 }
 
 export type AppStep = 'annotate' | 'record' | 'export'
+
+export interface RecentProject {
+  path: string
+  name: string
+  lastOpened: number
+}
+
+export interface DubDTProject {
+  dubdtVersion: string
+  name: string
+  createdAt: number
+  updatedAt: number
+  videoPath: string | null
+  videoName: string | null
+  customBgAudioPath: string | null
+  lines: DialogueLine[]
+  audioSettings: AudioSettings
+  exportSettings: ExportSettings
+}
