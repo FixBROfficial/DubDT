@@ -1,0 +1,21 @@
+directories:
+  output: release
+  buildResources: build
+appId: com.dubdt.studio
+productName: DubDT
+files:
+  - filter:
+      - dist/**/*
+      - electron/**/*
+      - package.json
+extraResources:
+  - from: bin
+    to: bin
+    filter:
+      - '**/*'
+win:
+  target:
+    - portable
+portable:
+  artifactName: DubDT-Portable.exe
+electronVersion: 44.5.0
